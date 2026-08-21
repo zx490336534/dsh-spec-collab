@@ -129,5 +129,5 @@ function slug(title: string): string {
 function assertRequirementId(value: string): void { if (!/^[a-z0-9\u4e00-\u9fff][a-z0-9\u4e00-\u9fff-]{1,80}$/.test(value)) throw new Error('invalid requirement id') }
 function initialSpec(title: string, raw: string, sources: SourceReference[]): string {
   const sourceLines = sources.length === 0 ? ['- 原始需求：当前文档（创建版本）'] : sources.map(item => `- [${item.accessStatus}] ${item.label}${item.stableId ? ` — ${item.stableId}` : ''}`)
-  return [`# ${title}`, '', '## 原始需求与来源', '', raw.trim(), '', ...sourceLines, '', '## 目标与用户结果', '', '<!-- AI 初审后补充 -->', '', '## 范围与非范围', '', '### 范围', '', '### 非范围', '', '## 业务术语与规则', '', '## 需求与验收标准', '', '- **AC-1**：待澄清', '', '## 异常、权限与兼容', '', '## 测试约束', '', '## 非阻塞 Open Questions', ''].join('\n')
+  return [`# ${title}`, '', '## 原始需求与来源', '', raw.trim(), '', ...sourceLines, '', '## 目标与用户结果', '', '<!-- AI 初审后补充 -->', '', '## 范围与非范围', '', '### 范围', '', '### 非范围', '', '## 业务术语与规则', '', '## 需求与验收标准', '', '- **AC-1**：待澄清', '', '## 异常、权限与兼容', '', '## 测试约束', '', '## 待补充资料', ''].join('\n')
 }
