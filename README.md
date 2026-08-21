@@ -1,8 +1,31 @@
 # dsh-spec-collab
 
+[![npm version](https://img.shields.io/npm/v/dsh-spec-collab?style=flat-square)](https://www.npmjs.com/package/dsh-spec-collab)
+[![license](https://img.shields.io/npm/l/dsh-spec-collab?style=flat-square)](LICENSE)
+
 DeepSeek Harness 的独立双面插件，用于把产品的原始需求澄清为研发和开发 AI 可直接理解的 Ready Spec。产品、研发、产品 AI 与研发 AI 在同一份 Git 版本化 Markdown 上完成初审、逐项回复、二次审核、候选 patch、产研共审、Decision、分角色确认与 Ready 质量门。
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
+
+## 一键安装
+
+已有 Node.js 环境时，无需先全局安装 DSH CLI：
+
+```sh
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-spec-collab@latest
+```
+
+如果 `dsh` 已在 `PATH` 中，也可以使用简写：
+
+```sh
+dsh plugin --profile web add dsh-spec-collab@latest
+```
+
+安装后重启现有的 `dsh web` 进程。后续更新使用：
+
+```sh
+dsh plugin --profile web update dsh-spec-collab@latest
+```
 
 ## 核心流程
 
@@ -69,7 +92,7 @@ DeepSeek Harness 的独立双面插件，用于把产品的原始需求澄清为
 
 Skill 和 MCP 必须已经由对应 Agent Preset 挂载：Skill 名称会要求 AI 先通过 `skill` 工具加载，MCP serverName 会映射为 `mcp__<serverName>__*` 工具 namespace。本插件不会在单次审核中安装外部代码或启动未授权 MCP；资源不可用时，AI 必须明确标记 `TO_VERIFY`，不能伪造 `FACT`。
 
-## 安装
+## 从源码安装（开发）
 
 需要 Node.js 20+、pnpm 9+ 和可用的 DeepSeek Harness。
 
