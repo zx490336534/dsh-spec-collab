@@ -43,7 +43,32 @@ dsh plugin --profile web update dsh-spec-collab@latest
 
 ## 完整演示
 
-查看[从原始需求到 Ready Spec 的完整使用演示](docs/usage-walkthrough.md)，包含工作区选择、智能初审/复审、候选 Patch、Decision、产研确认、Ready 质量门的 5 张截图和 [MP4 录屏](docs/assets/spec-collab-walkthrough.mp4)。
+点击下方截图观看从选择工作区到生成 Ready Spec 的完整 MP4 录屏：
+
+[![Ready 质量门与最终 Ready Spec](docs/assets/demo-05-ready.png)](docs/assets/spec-collab-walkthrough.mp4)
+
+**[播放 MP4 录屏](docs/assets/spec-collab-walkthrough.mp4)** · **[阅读完整图文教程](docs/usage-walkthrough.md)**
+
+<details>
+<summary>查看完整流程截图</summary>
+
+### 1. 新建需求并选择工作区
+
+![新建需求并选择工作区](docs/assets/demo-01-workspace.png)
+
+### 2. AI 审核问题和人工回复
+
+![AI 审核问题和人工回复](docs/assets/demo-02-ai-review.png)
+
+### 3. 审核并接受候选 Patch
+
+![审核并接受候选 Patch](docs/assets/demo-03-patches.png)
+
+### 4. 记录人工 Decision
+
+![人工确认的产品 Decision](docs/assets/demo-04-decisions.png)
+
+</details>
 
 ## 能力
 

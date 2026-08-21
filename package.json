@@ -1,6 +1,6 @@
 {
   "name": "dsh-spec-collab",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI-assisted requirement clarification and Git-backed Spec co-creation for DeepSeek Harness, ending at a human-confirmed Ready Spec.",
   "keywords": [
     "deepseek-harness",
@@ -46,6 +46,7 @@
   "files": [
     "lib",
     "src",
+    "docs",
     "cordis.patch.yml",
     "README.md"
   ],
