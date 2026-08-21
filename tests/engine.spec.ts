@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
-import { CollaborationEngine, type AiCoordinator } from '../src/engine.ts'
+import { CollaborationEngine, readiness, type AiCoordinator } from '../src/engine.ts'
 import { GitRequirementStore } from '../src/git-store.ts'
 import type { ParticipantSnapshot, RequirementView } from '../src/protocol.ts'
 
@@ -106,6 +106,18 @@ describe('CollaborationEngine', () => {
     expect(engine.apply('advance-blocked', { kind: 'stage.advance', participant: product, requirementId: view.id })).toMatchObject({ ok: false, error: 'product blocking review items remain' })
   })
 
+  it('resolves directly accepted findings but keeps modified answers pending a patch', async () => {
+    const engine = setup(); const view = create(engine)
+    engine.apply('review', { kind: 'review.request', participant: product, requirementId: view.id, reviewKind: 'product-second' }); await Promise.resolve()
+    const run = engine.view(view.id).aiRuns.find(item => item.kind === 'product-second')!
+    const finding = { type: 'semantics' as const, severity: 'blocking' as const, evidence: [], epistemicStatus: 'TO_VERIFY' as const, impact: '规则不明确', affectedSections: ['业务术语与规则'], affectedAcceptanceIds: [], ownerRole: 'product' as const, status: 'open' as const }
+    engine.submitReview({ requirementId: view.id, commit: view.currentCommit, runId: run.id, ai, maturitySummary: '存在两个待确认项', items: [{ ...finding, statement: '可直接确认的规则', question: '是否直接采用？' }, { ...finding, statement: '需要修改的规则', question: '如何修改？' }] })
+    const [direct, modified] = engine.view(view.id).reviewItems
+    engine.apply('accept-direct', { kind: 'review.respond', participant: product, requirementId: view.id, reviewItemId: direct!.id, disposition: 'accept', body: '直接采用该规则。' })
+    engine.apply('accept-modified', { kind: 'review.respond', participant: product, requirementId: view.id, reviewItemId: modified!.id, disposition: 'accept-modified', body: '采用建议并调整文案。' })
+    expect(engine.view(view.id).reviewItems.map(item => item.status)).toEqual(['resolved', 'answered'])
+  })
+
   it('passes the six-part gate only for the exact jointly confirmed commit', async () => {
     const engine = setup(); let view = create(engine)
     const saved = engine.apply('save', { kind: 'version.save', participant: product, requirementId: view.id, baseCommit: view.currentCommit, markdown: readyMarkdown(view), summary: 'Complete Ready inputs' }); if (!saved.ok) throw new Error(saved.error); view = saved.requirement
@@ -119,6 +131,27 @@ describe('CollaborationEngine', () => {
     const ready = engine.apply('ready', { kind: 'ready.generate', participant: product, requirementId: view.id })
     expect(ready.ok).toBe(true)
     if (ready.ok) expect(ready.requirement).toMatchObject({ stage: 'ready', readyPackage: { commit: view.currentCommit } })
+  })
+
+  it('recognizes acceptance criteria with descriptive titles', () => {
+    const engine = setup(); const view = create(engine)
+    const markdown = readyMarkdown(view).replace('**AC-RETRY-001**', '**AC-RETRY-001 网关超时重试**')
+    expect(readiness(markdown, view).find(check => check.key === 'acceptance')).toEqual({ key: 'acceptance', passed: true, reasons: [] })
+  })
+
+  it('does not carry blocking findings from an older commit into readiness', async () => {
+    const engine = setup(); let view = create(engine)
+    engine.apply('old-review', { kind: 'review.request', participant: product, requirementId: view.id, reviewKind: 'product-first' }); await Promise.resolve()
+    const run = engine.view(view.id).aiRuns.find(item => item.kind === 'product-first')!
+    engine.submitReview({ requirementId: view.id, commit: view.currentCommit, runId: run.id, ai, maturitySummary: '旧版本存在阻塞项', items: [{ type: 'goal', severity: 'blocking', statement: '旧版本目标缺失', evidence: [], epistemicStatus: 'TO_VERIFY', impact: '旧版本不可验收', question: '如何补齐目标？', affectedSections: ['目标与用户结果'], affectedAcceptanceIds: [], ownerRole: 'product', status: 'open' }] })
+    const saved = engine.apply('replace-old-version', { kind: 'version.save', participant: product, requirementId: view.id, baseCommit: view.currentCommit, markdown: readyMarkdown(view), summary: '补齐当前版本' })
+    if (!saved.ok) throw new Error(saved.error); view = saved.requirement
+    expect(view.reviewItems[0]).toMatchObject({ statement: '旧版本目标缺失', status: 'open' })
+    expect(view.readiness.find(check => check.key === 'evidence')).toEqual({ key: 'evidence', passed: true, reasons: [] })
+    engine.apply('current-review', { kind: 'review.request', participant: product, requirementId: view.id, reviewKind: 'product-second' }); await Promise.resolve()
+    const currentRun = engine.view(view.id).aiRuns.find(item => item.kind === 'product-second' && item.commit === view.currentCommit)!
+    engine.submitReview({ requirementId: view.id, commit: view.currentCommit, runId: currentRun.id, ai, maturitySummary: '当前版本可进入确认', items: [] })
+    expect(engine.apply('advance-current-version', { kind: 'stage.advance', participant: product, requirementId: view.id }).ok).toBe(true)
   })
 
   it('invalidates only overlapping scoped confirmations after a save', () => {

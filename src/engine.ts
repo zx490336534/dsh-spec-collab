@@ -183,7 +183,7 @@ export class CollaborationEngine {
       const item = record.reviewItems.find(candidate => candidate.id === action.reviewItemId)
       if (item === undefined) throw new Error('review item not found')
       item.response = { participant: action.participant, disposition: action.disposition, body: action.body.trim(), createdAt: now }
-      item.status = action.disposition === 'joint-review' ? 'joint-review' : action.disposition === 'to-verify' ? 'non-blocking-verify' : 'answered'
+      item.status = action.disposition === 'joint-review' ? 'joint-review' : action.disposition === 'to-verify' ? 'non-blocking-verify' : action.disposition === 'accept' ? 'resolved' : 'answered'
       item.updatedAt = now
       record.actionItems.filter(task => task.sourceId === item.id && task.status === 'pending').forEach(task => { task.status = 'handled'; task.updatedAt = now })
       this.persist()
@@ -319,7 +319,7 @@ function actionForReview(item: ReviewItem): ActionItem { const now = Date.now();
 function hasVersionConfirmation(record: RequirementRecord, role: 'product' | 'engineering'): boolean { return record.confirmations.some(item => item.role === role && item.scope === 'version' && item.commit === record.currentCommit && item.status === 'active') }
 function advance(record: RequirementRecord, participant: ParticipantSnapshot): void {
   if (record.stage === 'product-review') {
-    if (record.reviewItems.some(item => item.severity === 'blocking' && !['resolved', 'non-blocking-verify', 'joint-review'].includes(item.status))) throw new Error('product blocking review items remain')
+    if (record.reviewItems.some(item => item.commit === record.currentCommit && item.severity === 'blocking' && !['resolved', 'non-blocking-verify', 'joint-review'].includes(item.status))) throw new Error('product blocking review items remain')
     if (!record.aiRuns.some(run => run.kind === 'product-second' && run.commit === record.currentCommit && run.status === 'completed')) throw new Error('product second review is required')
     record.stage = 'product-confirmation'; return
   }
@@ -330,7 +330,7 @@ function advance(record: RequirementRecord, participant: ParticipantSnapshot): v
   throw new Error('stage cannot advance directly')
 }
 function sections(markdown: string): Map<string, string> { const result = new Map<string, string>(); let heading = ''; for (const line of markdown.split('\n')) { if (/^##\s+/.test(line)) { heading = line.replace(/^##\s+/, '').trim(); result.set(heading, '') } else if (heading) result.set(heading, `${result.get(heading) ?? ''}\n${line}`) } return result }
-function acceptance(markdown: string): Map<string, string> { const result = new Map<string, string>(); for (const match of markdown.matchAll(/\*\*(AC-[A-Za-z0-9-]+)\*\*\s*[：:]\s*(.+)/g)) result.set(match[1]!, match[2]!.trim()); return result }
+function acceptance(markdown: string): Map<string, string> { const result = new Map<string, string>(); for (const match of markdown.matchAll(/\*\*(AC-[A-Za-z0-9-]+)(?:\s+[^*]+)?\*\*\s*[：:]\s*(.+)/g)) result.set(match[1]!, match[2]!.trim()); return result }
 function changedScopes(before: string, after: string): { sections: string[]; acceptanceIds: string[] } { const a = sections(before); const b = sections(after); const sectionNames = new Set([...a.keys(), ...b.keys()]); const acA = acceptance(before); const acB = acceptance(after); const acNames = new Set([...acA.keys(), ...acB.keys()]); return { sections: [...sectionNames].filter(key => a.get(key) !== b.get(key)), acceptanceIds: [...acNames].filter(key => acA.get(key) !== acB.get(key)) } }
 function intersects(left: string[], right: string[]): boolean { return left.some(item => right.includes(item)) }
 function invalidateAffected(record: RequirementRecord, changedSections: string[], changedAcceptanceIds: string[]): void {
@@ -345,7 +345,7 @@ function invalidateAffected(record: RequirementRecord, changedSections: string[]
 export function readiness(markdown: string, record: RequirementRecord): ReadinessCheck[] {
   const sectionMap = sections(markdown); const ac = acceptance(markdown)
   const meaningful = (name: string): boolean => { const value = sectionMap.get(name)?.replace(/<!--.*?-->/gs, '').trim() ?? ''; return value.length >= 12 && !/待澄清|待补充|TODO/i.test(value) }
-  const blockers = record.reviewItems.filter(item => item.severity === 'blocking' && !['resolved', 'non-blocking-verify'].includes(item.status)).map(item => item.statement)
+  const blockers = record.reviewItems.filter(item => item.commit === record.currentCommit && item.severity === 'blocking' && !['resolved', 'non-blocking-verify'].includes(item.status)).map(item => item.statement)
   return [
     { key: 'goal', passed: meaningful('目标与用户结果'), reasons: meaningful('目标与用户结果') ? [] : ['缺少可观察的目标与用户结果'] },
     { key: 'acceptance', passed: ac.size > 0 && [...ac.values()].every(value => !/待澄清|待补充|TODO/i.test(value)), reasons: ac.size === 0 ? ['缺少稳定 AC ID 与可判定结果'] : [...ac.values()].some(value => /待澄清|待补充|TODO/i.test(value)) ? ['验收标准仍含占位内容'] : [] },

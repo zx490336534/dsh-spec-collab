@@ -41,6 +41,10 @@ dsh plugin --profile web update dsh-spec-collab@latest
   -> 输出 Ready Spec
 ```
 
+## 完整演示
+
+查看[从原始需求到 Ready Spec 的完整使用演示](docs/usage-walkthrough.md)，包含工作区选择、智能初审/复审、候选 Patch、Decision、产研确认、Ready 质量门的 5 张截图和 [MP4 录屏](docs/assets/spec-collab-walkthrough.mp4)。
+
 ## 能力
 
 - 匿名只读；首次评论、修改、回复、确认前登记 `participant_id + 花名 + 责任角色`。
