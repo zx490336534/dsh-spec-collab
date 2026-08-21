@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { normalize, resolve } from 'node:path'
+import { DEFAULT_REVIEW_PROMPTS, renderPrompt } from './prompts.ts'
 
 export interface ReviewContextResources {
   skills?: string[]
@@ -56,17 +57,33 @@ export class ReviewContextCatalog {
   }
 }
 
-export function reviewContextPrompt(context: ResolvedReviewContext): string {
-  const rows = [
-    '## 本次审核必须使用的上下文',
-    `DSH 工作区：\`${context.workspaceId}\`。当前 AI session 必须挂载该工作区，不得创建未分组会话。`,
-  ]
+export interface ReviewContextPromptOptions {
+  workspace?: { title: string; path: string }
+  workspaceSnapshot?: string
+  workspaceTemplate?: string
+  resourceTemplate?: string
+}
+
+export function reviewContextPrompt(context: ResolvedReviewContext, options: ReviewContextPromptOptions = {}): string {
+  const workspace = options.workspace ?? { title: context.workspaceId, path: '未提供' }
+  const rows: string[] = []
   if (context.skills.length > 0) rows.push(`Skills：先调用 skill 工具加载 ${context.skills.map(value => `\`${value}\``).join('、')}，读取完整说明后再分析。`)
   if (context.mcpServers.length > 0) rows.push(`MCP：需要事实查询时优先使用 ${context.mcpServers.map(value => `\`mcp__${value}__*\``).join('、')} namespace 下的工具。`)
   if (context.documentPaths.length > 0) rows.push('本地参考文档：分析前先读取与本需求相关的路径；相对路径基于当前 DSH 工作区根目录，引用时必须带具体文件路径和可识别版本。', ...context.documentPaths.map(value => `- \`${value}\``))
   if (context.skills.length === 0 && context.mcpServers.length === 0 && context.documentPaths.length === 0) rows.push('当前未配置额外 Skill、MCP 或本地参考文档。')
-  rows.push('任何已配置资源若在当前 Agent Preset 中不可用、无权限或读取失败，必须在结论中明确指出该资源并使用 TO_VERIFY；不得假装已经查询或把不可访问内容写成 FACT。')
-  return rows.join('\n')
+  const resourceInstructions = renderPrompt(options.resourceTemplate ?? DEFAULT_REVIEW_PROMPTS.resourceInstructions, {
+    RESOURCE_DETAILS: rows.join('\n'),
+    SKILLS: formatValues(context.skills),
+    MCP_SERVERS: formatValues(context.mcpServers.map(value => `mcp__${value}__*`)),
+    DOCUMENT_PATHS: formatValues(context.documentPaths),
+  })
+  return renderPrompt(options.workspaceTemplate ?? DEFAULT_REVIEW_PROMPTS.workspaceContext, {
+    WORKSPACE_ID: context.workspaceId,
+    WORKSPACE_TITLE: workspace.title,
+    WORKSPACE_PATH: workspace.path,
+    WORKSPACE_SNAPSHOT: options.workspaceSnapshot ?? '工作区快照尚未生成。',
+    RESOURCE_INSTRUCTIONS: resourceInstructions,
+  })
 }
 
 function normalizeResources(value: ReviewContextResources | undefined): NormalizedReviewContext {
@@ -80,6 +97,7 @@ function normalizeResources(value: ReviewContextResources | undefined): Normaliz
 
 function cleanList(values: string[] | undefined): string[] { return unique((values ?? []).map(value => value.trim()).filter(Boolean)) }
 function unique(values: string[]): string[] { return [...new Set(values)] }
+function formatValues(values: string[]): string { return values.length > 0 ? values.map(value => `\`${value}\``).join('、') : '未配置' }
 function resolveDocumentPath(value: string): string {
   if (value === '~') return homedir()
   if (value.startsWith('~/') || value.startsWith('~\\')) return normalize(resolve(homedir(), value.slice(2)))

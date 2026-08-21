@@ -125,6 +125,41 @@ dsh plugin --profile web update dsh-spec-collab@latest
 
 Skill 和 MCP 必须已经由对应 Agent Preset 挂载：Skill 名称会要求 AI 先通过 `skill` 工具加载，MCP serverName 会映射为 `mcp__<serverName>__*` 工具 namespace。本插件不会在单次审核中安装外部代码或启动未授权 MCP；资源不可用时，AI 必须明确标记 `TO_VERIFY`，不能伪造 `FACT`。
 
+绑定工作区会把 AI session 的当前目录设为该工作区的真实路径，但“挂载成功”不代表模型已经读取项目文件。默认工作区提示词会强制每次审核先检查根目录，读取存在的 `AGENTS.md`、`CONTEXT.md`、`README.md`、`CONTRIBUTING.md` 和项目清单，再按需求定位相关代码、文档、测试及 Git 历史。业务专属资料仍建议通过 `documentPaths` 明确指定。
+
+## AI 提示词配置
+
+`prompts` 中每个字段都可以单独覆盖，未填写的字段继续使用插件当前内置提示词。动态的需求 ID、commit、审核类型和 session ID 由插件注入，不需要写进自定义提示词。
+
+```yaml
+- id: spec-collab
+  config:
+    prompts:
+      common: |-
+        所有输出使用简体中文，并遵守团队的需求审核规范。
+      productFirst: |-
+        先检查用户目标、范围、业务规则和验收标准，再提交结构化审核结果。
+      workspaceContext: |-
+        ## 项目上下文
+        项目：{{WORKSPACE_TITLE}}
+        根目录：{{WORKSPACE_PATH}}
+        审核前先读取项目规则、说明文档和相关实现。
+        {{WORKSPACE_SNAPSHOT}}
+        {{RESOURCE_INSTRUCTIONS}}
+      resourceInstructions: |-
+        可用 Skill：{{SKILLS}}
+        可用 MCP：{{MCP_SERVERS}}
+        指定文档：{{DOCUMENT_PATHS}}
+      followUp: |-
+        请基于当前审核上下文回答下面的追问：
+
+        {{CONTENT}}
+```
+
+可配置字段：`system`、`workspaceContext`、`resourceInstructions`、`common`、`productFirst`、`productSecond`、`engineeringPrecheck`、`changeReview`、`comment`、`followUp`。
+
+`workspaceContext` 必须各保留一次 `{{WORKSPACE_SNAPSHOT}}` 和 `{{RESOURCE_INSTRUCTIONS}}`，还支持 `{{WORKSPACE_ID}}`、`{{WORKSPACE_TITLE}}`、`{{WORKSPACE_PATH}}`。`resourceInstructions` 支持 `{{RESOURCE_DETAILS}}`、`{{SKILLS}}`、`{{MCP_SERVERS}}`、`{{DOCUMENT_PATHS}}`。`followUp` 必须保留且只能保留一个 `{{CONTENT}}`。未知变量和缺失的必需变量会在插件启动时直接报错，避免错误模板进入 AI 会话。完整默认值由包入口导出的 `DEFAULT_REVIEW_PROMPTS` 提供。
+
 ## 从源码安装（开发）
 
 需要 Node.js 20+、pnpm 9+ 和可用的 DeepSeek Harness。
