@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import type { SpecApi } from './api.ts'
 import { SpecWorkbench } from './SpecWorkbench.tsx'
 import css from './workbench.module.css'
+import { findSidebarAnchor } from './sidebar-anchor.ts'
 
 const ACTIVE = 'data-dsh-spec-collab-active'
 const VIEW = '[data-dsh-spec-collab-view]'
@@ -53,18 +54,17 @@ export function mountSidebarEntry(): () => void {
   }
   const ensure = (): void => {
     if (row?.isConnected) return
-    const skillCenter = document.querySelector<HTMLElement>('button[aria-label="技能中心"]')
-      ?? [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === '技能中心')
-    if (skillCenter === undefined || skillCenter === null) return
+    const anchor = findSidebarAnchor(document)
+    if (anchor === undefined) return
     row = document.createElement('button')
     row.type = 'button'
     row.dataset.dshSpecCollabEntry = ''
-    row.className = `${skillCenter.className} ${css.entry!}`
+    row.className = `${anchor.element.className} ${css.entry!}`
     row.title = '需求讨论'
     row.setAttribute('aria-label', '需求讨论')
     row.innerHTML = '<span aria-hidden="true">▤</span><span>需求讨论</span>'
     row.addEventListener('click', toggle)
-    skillCenter.after(row)
+    anchor.element[anchor.placement](row)
   }
   const observer = new MutationObserver(ensure)
   observer.observe(document.body, { childList: true, subtree: true })

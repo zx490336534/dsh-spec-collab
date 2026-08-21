@@ -7,6 +7,8 @@ DeepSeek Harness 的独立双面插件，用于把产品的原始需求澄清为
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
+兼容 DeepSeek Harness `v0.1.1-rc.1`。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；DSH 精简侧栏仅显示“设置”时，也会正常挂载“需求讨论”入口。
+
 ## 一键安装
 
 已有 Node.js 环境时，无需先全局安装 DSH CLI：
@@ -26,6 +28,8 @@ dsh plugin --profile web add dsh-spec-collab@latest
 ```sh
 dsh plugin --profile web update dsh-spec-collab@latest
 ```
+
+插件已经内置非安全 HTTP 环境所需的 UUID fallback，不需要通过代理向 HTML 注入 `crypto` polyfill。团队部署仍建议使用 HTTPS，并在 DSH 前配置认证。
 
 ## 核心流程
 

@@ -5,6 +5,7 @@ import '@toast-ui/editor/dist/i18n/zh-cn'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
 import type { CollaborationAction, CommentResolution, MyActionItem, ParticipantRole, ParticipantSnapshot, RequirementStage, RequirementVersion, RequirementView, ReviewKind, ReviewWorkspaceSummary, SaveConflict } from '../protocol.ts'
 import type { SpecApi } from './api.ts'
+import { browserUuid } from './browser-uuid.ts'
 import css from './workbench.module.css'
 
 const md = new MarkdownIt({ html: false, linkify: true })
@@ -21,7 +22,7 @@ const markdownShortcutsPlugin = () => ({ wysiwygPlugins: [() => inputRules({ rul
 ] })] })
 type SideTab = 'review' | 'discussion' | 'patches' | 'decisions' | 'items' | 'versions' | 'ready'
 type CommentAnchor = { quote: string; prefix: string; suffix: string; heading?: string }
-function newParticipant(): ParticipantSnapshot { return { participantId: crypto.randomUUID(), nickname: '', role: 'product', kind: 'human' } }
+function newParticipant(): ParticipantSnapshot { return { participantId: browserUuid(), nickname: '', role: 'product', kind: 'human' } }
 function loadParticipant(): ParticipantSnapshot { try { const value = JSON.parse(localStorage.getItem('dsh-spec-collab.participant') ?? '') as ParticipantSnapshot; if (value.participantId) return { ...value, kind: 'human' } } catch {} return newParticipant() }
 function stageLabel(stage: RequirementStage): string { return ({ 'product-review': '产品审核', 'product-confirmation': '产品确认', 'joint-review': '产研共审', ready: 'Ready' })[stage] }
 function currentPendingActions(requirement: RequirementView): RequirementView['actionItems'] {
