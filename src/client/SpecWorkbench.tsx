@@ -37,7 +37,7 @@ function currentPendingActions(requirement: RequirementView): RequirementView['a
 }
 const tabLabel: Record<SideTab, string> = { review: '审核问题', discussion: '协作讨论', patches: '修改建议', decisions: '确认决策', items: '我的事项', versions: '版本记录', ready: '完成检查' }
 
-export function SpecWorkbench({ api }: { api: SpecApi }) {
+export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => void }) {
   const [requirements, setRequirements] = useState<RequirementView[]>([])
   const [reviewWorkspaces, setReviewWorkspaces] = useState<ReviewWorkspaceSummary[]>([])
   const [participantBindings, setParticipantBindings] = useState<ParticipantSnapshot[]>([])
@@ -148,6 +148,7 @@ export function SpecWorkbench({ api }: { api: SpecApi }) {
     <header className={css.header}>
       <div className={css.titleBlock}><strong>{selected?.title ?? 'AI 需求澄清与 Spec 共创'}</strong>{selected && <span>{stageLabel(selected.stage)} · {selected.workspaceId ? reviewWorkspaces.find(workspace => workspace.workspaceId === selected.workspaceId)?.title ?? selected.workspaceId : '未绑定工作区'} · {selected.currentCommit.slice(0, 10)} · {selected.reviewItems.filter(item => item.commit === selected.currentCommit && item.severity === 'blocking' && !['resolved', 'non-blocking-verify', 'joint-review'].includes(item.status)).length} 阻塞</span>}</div>
       <div className={css.headerActions}>
+        <button onClick={onClose}>返回聊天</button>
         {selected && !selected.workspaceId && <button onClick={() => { setBindWorkspaceOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))) }}>绑定工作区</button>}
         {selected?.stage === 'product-review' && <><button disabled={productFirstRunning || !selected.workspaceId} title={!selected.workspaceId ? '请先绑定工作区' : productFirstRunning ? '初审进行中' : '启动智能初审'} onClick={() => void requestReview('product-first')}>智能初审</button><button disabled={!selected.workspaceId} onClick={() => void requestReview('product-second')}>智能复审</button><button className={css.execute} onClick={() => void advance()}>进入产品确认</button></>}
         {selected?.stage === 'product-confirmation' && <><button onClick={() => void confirm('product')}>产品确认当前版本</button><button onClick={() => void advance()}>进入产研共审</button></>}

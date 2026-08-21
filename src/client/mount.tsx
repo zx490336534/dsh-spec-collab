@@ -8,6 +8,7 @@ import { findSidebarAnchor } from './sidebar-anchor.ts'
 const ACTIVE = 'data-dsh-spec-collab-active'
 const VIEW = '[data-dsh-spec-collab-view]'
 const ACTIVATE_EVENT = 'dsh-panel-activate'
+const CLOSE_EVENT = 'dsh-spec-collab-close'
 
 export function mountWorkbench(api: SpecApi): () => void {
   let root: Root | undefined
@@ -23,7 +24,7 @@ export function mountWorkbench(api: SpecApi): () => void {
     container.className = css.view!
     column.appendChild(container)
     root = createRoot(container)
-    root.render(<SpecWorkbench api={api} />)
+    root.render(<SpecWorkbench api={api} onClose={() => document.dispatchEvent(new CustomEvent(CLOSE_EVENT))} />)
   }
   const observer = new MutationObserver(ensure)
   observer.observe(document.body, { childList: true, subtree: true })
@@ -41,6 +42,7 @@ export function mountSidebarEntry(): () => void {
     close()
   }
   document.addEventListener('click', closeOnExternalNavigation, true)
+  document.addEventListener(CLOSE_EVENT, close)
   const toggle = (): void => {
     const opening = !document.documentElement.hasAttribute(ACTIVE)
     for (const name of document.documentElement.getAttributeNames()) {
@@ -69,5 +71,5 @@ export function mountSidebarEntry(): () => void {
   const observer = new MutationObserver(ensure)
   observer.observe(document.body, { childList: true, subtree: true })
   ensure()
-  return () => { observer.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
+  return () => { observer.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, close); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
 }
