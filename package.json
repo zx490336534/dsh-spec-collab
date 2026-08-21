@@ -1,0 +1,96 @@
+{
+  "name": "dsh-spec-collab",
+  "version": "0.1.0",
+  "description": "AI-assisted requirement clarification and Git-backed Spec co-creation for DeepSeek Harness, ending at a human-confirmed Ready Spec.",
+  "keywords": [
+    "deepseek-harness",
+    "requirements",
+    "specification",
+    "ai-review",
+    "collaboration"
+  ],
+  "homepage": "https://github.com/zx490336534/dsh-spec-collab#readme",
+  "bugs": {
+    "url": "https://github.com/zx490336534/dsh-spec-collab/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zx490336534/dsh-spec-collab.git"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json && tsdown",
+    "bundle": "tsdown",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@toast-ui/editor": "3.2.2",
+    "lightningcss": "^1.32.0",
+    "markdown-it": "^14.1.0",
+    "prosemirror-inputrules": "^1.5.0",
+    "schemastery": "^3.18.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-host-apiproxy": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.20.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "^18.3.5",
+    "jsdom": "^25.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "0.22.2",
+    "typescript": "~5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.9.0",
+  "license": "Apache-2.0"
+}
