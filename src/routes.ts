@@ -7,7 +7,7 @@ import type { DshReviewCoordinator } from './review-runtime.ts'
 const BODY_LIMIT = 2 * 1024 * 1024
 const HEARTBEAT_MS = 15_000
 function json(res: ServerResponse, status: number, body: unknown): void { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); res.end(JSON.stringify(body)) }
-function trusted(req: IncomingMessage): boolean { const remote = req.socket.remoteAddress; if (!(remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1')) return false; if (req.headers['sec-fetch-site'] === 'cross-site') return false; const origin = req.headers.origin; if (origin === undefined) return req.headers['sec-fetch-site'] === 'same-origin'; try { return new URL(origin).host === req.headers.host } catch { return false } }
+function trusted(req: IncomingMessage): boolean { const remote = req.socket.remoteAddress; if (!(remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1')) return false; if (req.headers['sec-fetch-site'] === 'cross-site') return false; const origin = req.headers.origin; if (origin === undefined) return true; try { return new URL(origin).host === req.headers.host } catch { return false } }
 async function readJson(req: IncomingMessage): Promise<unknown> { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { const buffer = chunk as Buffer; size += buffer.length; if (size > BODY_LIMIT) throw new Error('body-too-large'); chunks.push(buffer) } return JSON.parse(Buffer.concat(chunks).toString('utf8')) }
 
 export function makeRoutes(engine: CollaborationEngine, coordinator: DshReviewCoordinator): WebRoute[] {
