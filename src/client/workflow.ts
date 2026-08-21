@@ -2,7 +2,7 @@ import type { ParticipantRole, RequirementView, ReviewKind } from '../protocol.t
 
 export type TaskView = 'review' | 'patches' | 'ready'
 export type WorkflowCommand =
-  | { kind: 'open'; view: TaskView }
+  | { kind: 'open'; view: TaskView; objectId?: string }
   | { kind: 'bind-workspace' }
   | { kind: 'request-review'; reviewKind: ReviewKind }
   | { kind: 'advance' }
@@ -51,8 +51,8 @@ export function workflowState(requirement: RequirementView, participantRole: Par
       actionLabel: '开始需求检查', command: { kind: 'request-review', reviewKind: 'product-first' },
     }
     if (unanswered.length > 0) return {
-      eyebrow: '需要你的判断', title: `回答 ${unanswered.length} 个关键问题`, detail: '先处理会影响范围、规则或验收结果的问题，其余内容可以稍后核对。',
-      actionLabel: '继续回答', command: { kind: 'open', view: 'review' },
+      eyebrow: '需要你的判断', title: `回答 ${unanswered.length} 个关键问题`, detail: '每次处理一项，回答后回到清单继续。',
+      actionLabel: '回答下一题', command: { kind: 'open', view: 'review', objectId: unanswered[0]!.id },
     }
     if (currentPatches.length > 0) return {
       eyebrow: 'AI 已整理改动', title: `审核 ${currentPatches.length} 份正文修改`, detail: '确认改动符合你的判断后，再写入正式需求版本。',
@@ -87,7 +87,7 @@ export function workflowState(requirement: RequirementView, participantRole: Par
     }
     if (unanswered.length > 0) return {
       eyebrow: '研发发现待确认项', title: `处理 ${unanswered.length} 个阻塞问题`, detail: '这些问题会影响实现或验收，需要在交付研发前明确。',
-      actionLabel: '继续处理', command: { kind: 'open', view: 'review' },
+      actionLabel: '处理下一题', command: { kind: 'open', view: 'review', objectId: unanswered[0]!.id },
     }
     if (currentPatches.length > 0) return {
       eyebrow: '研发建议了改动', title: `审核 ${currentPatches.length} 份正文修改`, detail: '确认实现约束和测试条件已准确写回需求。',
@@ -95,7 +95,7 @@ export function workflowState(requirement: RequirementView, participantRole: Par
     }
     if (blockers.length > 0) return {
       eyebrow: '仍有待收敛内容', title: '复核已回复的问题', detail: '已有回复尚未消除阻塞，请重新检查或让 AI 根据结论更新正文。',
-      actionLabel: '查看问题', command: { kind: 'open', view: 'review' },
+      actionLabel: '查看问题', command: { kind: 'open', view: 'review', objectId: blockers[0]!.id },
     }
     if (failedChecks.length > 0) return {
       eyebrow: '交付条件未齐', title: `补齐 ${failedChecks.length} 项需求内容`, detail: '完成条件会指出正文缺少的目标、范围、验收标准或测试约束。',

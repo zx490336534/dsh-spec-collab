@@ -24,6 +24,7 @@ const markdownShortcutsPlugin = () => ({ wysiwygPlugins: [() => inputRules({ rul
 type PrimaryMode = 'tasks' | 'discussion' | 'records'
 type RecordView = 'decisions' | 'versions'
 type CommentAnchor = { quote: string; prefix: string; suffix: string; heading?: string }
+type ReviewOpenRequest = { objectId: string; requestId: number }
 function newParticipant(): ParticipantSnapshot { return { participantId: browserUuid(), nickname: '', role: 'product', kind: 'human' } }
 function loadParticipant(): ParticipantSnapshot { try { const value = JSON.parse(localStorage.getItem('dsh-spec-collab.participant') ?? '') as ParticipantSnapshot; if (value.participantId) return { ...value, kind: 'human' } } catch {} return newParticipant() }
 function stageLabel(stage: RequirementStage): string { return ({ 'product-review': '产品审核', 'product-confirmation': '产品确认', 'joint-review': '产研共审', ready: 'Ready' })[stage] }
@@ -62,6 +63,8 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const [taskView, setTaskView] = useState<TaskView>('review')
   const [recordView, setRecordView] = useState<RecordView>('decisions')
   const [mobilePane, setMobilePane] = useState<'spec' | 'collab'>('spec')
+  const [reviewOpenRequest, setReviewOpenRequest] = useState<ReviewOpenRequest>()
+  const reviewOpenRequestId = useRef(0)
   const [draft, setDraft] = useState('')
   const [summary, setSummary] = useState('')
   const [notice, setNotice] = useState('')
@@ -118,7 +121,13 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const advance = async (): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'stage.advance', participant: actor, requirementId: selected.id })) }
   const executeWorkflow = async (command: WorkflowCommand): Promise<void> => {
     if (!selected || command.kind === 'none') return
-    if (command.kind === 'open') { setPrimaryMode('tasks'); setTaskView(command.view); setMobilePane('collab'); return }
+    if (command.kind === 'open') {
+      setPrimaryMode('tasks')
+      setTaskView(command.view)
+      setMobilePane('collab')
+      if (command.view === 'review' && command.objectId) setReviewOpenRequest({ objectId: command.objectId, requestId: ++reviewOpenRequestId.current })
+      return
+    }
     if (command.kind === 'bind-workspace') { setBindWorkspaceOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))); return }
     if (command.kind === 'request-review') { setTaskView('review'); await requestReview(command.reviewKind); return }
     if (command.kind === 'advance') { await advance(); return }
@@ -191,7 +200,7 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
           {workflow && <WorkflowFocus state={workflow} pendingForMe={currentMyItems.length} onExecute={() => void executeWorkflow(workflow.command)}/>}
           {currentMyItems.length > 0 && <TaskQueue items={currentMyItems} open={openMyItem}/>}
           <div className={css.contextNav} role="tablist" aria-label="待处理内容"><button role="tab" aria-selected={taskView === 'review'} className={taskView === 'review' ? css.activeContext : ''} onClick={() => setTaskView('review')}>问题{currentReviews.length > 0 && <span>{currentReviews.length}</span>}</button><button role="tab" aria-selected={taskView === 'patches'} className={taskView === 'patches' ? css.activeContext : ''} onClick={() => setTaskView('patches')}>AI 建议{pendingPatches.length > 0 && <span>{pendingPatches.length}</span>}</button><button role="tab" aria-selected={taskView === 'ready'} className={taskView === 'ready' ? css.activeContext : ''} onClick={() => setTaskView('ready')}>完成条件{failedChecks > 0 && <span>{failedChecks}</span>}</button></div>
-          <div className={css.threadList}>{taskView === 'review' && <ReviewPanel requirement={selected} act={act} api={api}/>} {taskView === 'patches' && <PatchPanel requirement={selected} act={act}/>} {taskView === 'ready' && <ReadyPanel requirement={selected} act={act}/>}</div>
+          <div className={css.threadList}>{taskView === 'review' && <ReviewPanel requirement={selected} act={act} api={api} openRequest={reviewOpenRequest} onOpenRequestHandled={requestId => setReviewOpenRequest(current => current?.requestId === requestId ? undefined : current)}/>} {taskView === 'patches' && <PatchPanel requirement={selected} act={act}/>} {taskView === 'ready' && <ReadyPanel requirement={selected} act={act}/>}</div>
         </>}
         {selected && primaryMode === 'discussion' && <div className={css.threadList}><DiscussionPanel requirement={selected} selection={selection} text={commentText} setText={setCommentText} cancel={() => setSelection(undefined)} submit={addComment} participant={participant} act={act} api={api}/></div>}
         {selected && primaryMode === 'records' && <><div className={css.contextNav} role="tablist" aria-label="需求记录"><button role="tab" aria-selected={recordView === 'decisions'} className={recordView === 'decisions' ? css.activeContext : ''} onClick={() => setRecordView('decisions')}>关键决策</button><button role="tab" aria-selected={recordView === 'versions'} className={recordView === 'versions' ? css.activeContext : ''} onClick={() => setRecordView('versions')}>版本历史</button></div><div className={css.threadList}>{recordView === 'decisions' && <DecisionPanel requirement={selected} act={act}/>} {recordView === 'versions' && <VersionPanel requirement={selected} api={api}/>}</div></>}
@@ -270,7 +279,7 @@ const statusLabel: Record<string, string> = { queued: '排队中', running: '分
 const evidenceStatusLabel: Record<string, string> = { FACT: '已有依据', INFERENCE: '根据现有信息推断', ASSUMPTION: '暂定规则', TO_VERIFY: '待核对' }
 function MarkdownBody({ text, className = '' }: { text: string; className?: string | undefined }) { return <div className={`${css.markdownBody} ${className}`} dangerouslySetInnerHTML={{ __html: md.render(text) }}/> }
 type ReviewItemView = RequirementView['reviewItems'][number]
-export function ReviewPanel({ requirement, act, api }: { requirement: RequirementView; act: Act; api: SpecApi }) {
+export function ReviewPanel({ requirement, act, api, openRequest, onOpenRequestHandled }: { requirement: RequirementView; act: Act; api: SpecApi; openRequest?: ReviewOpenRequest | undefined; onOpenRequestHandled?: (requestId: number) => void }) {
   const [selectedItemId, setSelectedItemId] = useState<string>()
   const closeSelectedItem = useCallback(() => setSelectedItemId(undefined), [])
   const current = requirement.reviewItems.filter(item => item.commit === requirement.currentCommit).slice().sort((left, right) => Number(right.severity === 'blocking') - Number(left.severity === 'blocking') || right.updatedAt - left.updatedAt)
@@ -281,6 +290,11 @@ export function ReviewPanel({ requirement, act, api }: { requirement: Requiremen
   const settledCount = current.length - pendingCount
   const selectedItem = [...current, ...historical].find(item => item.id === selectedItemId)
   const currentRuns = requirement.aiRuns.filter(run => run.commit === requirement.currentCommit)
+  useEffect(() => {
+    if (!openRequest) return
+    if ([...current, ...historical].some(item => item.id === openRequest.objectId)) setSelectedItemId(openRequest.objectId)
+    onOpenRequestHandled?.(openRequest.requestId)
+  }, [openRequest?.requestId])
   return <>
     <div className={css.panelSummary}><div><strong>问题检查清单</strong><span>{pendingCount > 0 ? `${pendingCount} 项待处理 · ${active.filter(item => item.severity === 'blocking').length} 项阻塞下一阶段` : '当前版本已全部处理'}</span></div>{current.length > 0 && <div className={css.checklistMeter}><small>{settledCount}/{current.length}</small><progress aria-label={`已处理 ${settledCount} 项，共 ${current.length} 项`} value={settledCount} max={current.length}/></div>}</div>
     {currentRuns.length > 0 && <details className={css.runHistory}><summary>查看本轮 AI 检查记录（{currentRuns.length}）</summary>{currentRuns.slice().reverse().map(run => <div className={css.run} key={run.id}><div><strong>{reviewKindLabel[run.kind]}</strong><span>{statusLabel[run.status] ?? run.status}</span></div>{run.maturitySummary && <MarkdownBody text={run.maturitySummary}/>} {run.error && <p className={css.chatError}>{friendlyActionError(run.error)}</p>}{run.sessionId && <AiConversation api={api} requirementId={requirement.id} sessionId={run.sessionId}/>}</div>)}</details>}

@@ -40,7 +40,7 @@ describe('workflow state', () => {
 
   it('directs the product to unanswered blocking questions', () => {
     const state = workflowState(requirement({ aiRuns: [run('product-first')], reviewItems: [blockingReview()] }), 'product')
-    expect(state).toMatchObject({ title: '回答 1 个关键问题', command: { kind: 'open', view: 'review' } })
+    expect(state).toMatchObject({ title: '回答 1 个关键问题', actionLabel: '回答下一题', command: { kind: 'open', view: 'review', objectId: 'review-1' } })
   })
 
   it('advances only after product second review has completed', () => {

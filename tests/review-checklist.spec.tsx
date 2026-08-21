@@ -53,4 +53,26 @@ describe('review checklist', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(row)
   })
+
+  it('opens a requested checklist item directly from the workflow action', async () => {
+    const requirement = {
+      id: 'requirement-1', currentCommit: 'a'.repeat(40), reviewItems: [{
+        id: 'review-1', requirementId: 'requirement-1', commit: 'a'.repeat(40), reviewKind: 'product-first', type: 'scope', severity: 'blocking',
+        statement: '移动端范围尚未确定', question: '这次是否包含移动端？', impact: '影响研发范围。', evidence: [], epistemicStatus: 'TO_VERIFY',
+        affectedSections: ['范围与非范围'], affectedAcceptanceIds: [], ownerRole: 'product', status: 'open', createdAt: 1, updatedAt: 2,
+      }], aiRuns: [],
+    } as unknown as RequirementView
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    roots.push(root)
+    const handled = vi.fn()
+
+    await act(async () => {
+      root.render(<ReviewPanel requirement={requirement} act={vi.fn(async () => true)} api={{} as SpecApi} openRequest={{ objectId: 'review-1', requestId: 1 }} onOpenRequestHandled={handled}/>)
+    })
+
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('这次是否包含移动端？')
+    expect(handled).toHaveBeenCalledWith(1)
+  })
 })
