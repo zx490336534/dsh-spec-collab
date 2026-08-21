@@ -18,9 +18,11 @@ export interface ParticipantSnapshot { participantId: string; nickname: string; 
 export interface SourceReference { id: string; sourceType: 'text' | 'markdown' | 'prototype' | 'meeting' | 'data' | 'link' | 'feedback' | 'code-scope'; label: string; stableId?: string; version?: string; accessStatus: 'available' | 'unverified' | 'missing' }
 export interface RequirementVersion { commit: string; parentCommit?: string; markdown: string; author: ParticipantSnapshot; summary: string; createdAt: number }
 export interface ReviewEvidence { statement: string; source: string; version?: string; accessible: boolean }
+export interface ReviewSourceAnchor { quote: string; heading?: string }
 export interface ReviewItem {
   id: string; requirementId: string; commit: string; reviewKind: ReviewKind; type: ReviewItemType; severity: Severity; statement: string
   evidence: ReviewEvidence[]; epistemicStatus: EpistemicStatus; impact: string; question: string; affectedSections: string[]; affectedAcceptanceIds: string[]
+  sourceAnchors?: ReviewSourceAnchor[]
   recommendedOptions?: string[]
   ownerRole: ParticipantRole; ownerParticipantId?: string; status: ReviewItemStatus
   response?: { participant: ParticipantSnapshot; disposition: 'context' | 'evidence' | 'accept' | 'accept-modified' | 'reject' | 'to-verify' | 'joint-review'; body: string; createdAt: number }

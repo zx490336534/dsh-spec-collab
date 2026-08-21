@@ -51,7 +51,7 @@ export function workflowState(requirement: RequirementView, participantRole: Par
       actionLabel: '开始需求检查', command: { kind: 'request-review', reviewKind: 'product-first' },
     }
     if (unanswered.length > 0) return {
-      eyebrow: '需要你的判断', title: `回答 ${unanswered.length} 个关键问题`, detail: '每次处理一项，回答后回到清单继续。',
+      eyebrow: '需要你的判断', title: `回答 ${unanswered.length} 个关键问题`, detail: '可以连续回答；完成最后一项后，再让 AI 回读全部结论并整理正文。',
       actionLabel: '回答下一题', command: { kind: 'open', view: 'review', objectId: unanswered[0]!.id },
     }
     if (currentPatches.length > 0) return {
@@ -59,8 +59,8 @@ export function workflowState(requirement: RequirementView, participantRole: Par
       actionLabel: '查看改动', command: { kind: 'open', view: 'patches' },
     }
     if (productBlockers.length > 0 || !completed('product-second')) return {
-      eyebrow: '答案已收集', title: '让 AI 把结论整理进正文', detail: 'AI 会复核你的回答，并生成可逐项审核的正文修改。',
-      actionLabel: '整理正文改动', command: { kind: 'request-review', reviewKind: 'product-second' },
+      eyebrow: '人工回答已完成', title: '下一步：让 AI 回读全部回答', detail: '点击下方按钮后，AI 会重新检查正文与回答，并生成可逐项审核的正文修改。此步骤不会自动开始。',
+      actionLabel: '让 AI 回读并生成修改', command: { kind: 'request-review', reviewKind: 'product-second' },
     }
     return {
       eyebrow: '产品澄清完成', title: '进入产品确认', detail: '当前版本没有产品侧阻塞问题，下一步由产品负责人确认内容。',

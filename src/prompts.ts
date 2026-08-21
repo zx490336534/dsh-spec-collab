@@ -42,6 +42,7 @@ export const DEFAULT_REVIEW_PROMPTS: ResolvedReviewPrompts = {
     'Use spec_read to retrieve the exact current data. Do not modify files directly.',
     '每个 Review Item 默认给出三个 recommendedOptions。每个选项只表达一个决定，使用“选择 + 直接结果”的短句，建议不超过 45 个汉字；三个选项必须有真实差异，不得只是“接受、拒绝、待验证”的同义改写。确有四种独立方案时才允许第四项。',
     'Review Item 的 question 只问一个可以直接回答的问题，建议不超过 40 个汉字。背景放在 statement，后果放在 impact，不要把背景、问题和多个子问题挤进 question 或选项。',
+    '每个 Review Item 必须提供 sourceAnchors：优先从当前 Spec 原文逐字复制 1 至 3 段能说明问题的短句，并填写所在 heading；不得改写或概括。问题来自正文缺失、没有可引用原文时，sourceAnchors 使用空数组，并通过 affectedSections / affectedAcceptanceIds 指明应补充的位置。',
     '审核记录与正式文档必须分层：FACT / INFERENCE / ASSUMPTION / TO_VERIFY、commit SHA、run ID 等只用于结构化审核记录，不得堆入候选 Spec 正文。',
     '候选 Spec 必须使用产品和研发都能直接理解的自然中文。避免行业黑话、审计腔和无必要的英文；英文缩写首次出现时必须同时写出中文含义，例如“行动按钮（CTA）”，后续优先使用中文。无法准确解释的缩写不要使用。',
     '优先使用这些通俗说法：操作按钮（不用 CTA）、统一风格标识（不用 canonical key）、点赞（不用 like）、提示词（不用 prompt）、测试数据（不用 fixture）、最终判断依据（不用事实源）、完成状态（不用终态）、重复操作结果一致（不用幂等）。Upgrade、Download、Lite、Plus 等确为界面文案或套餐名时可保留，但首次出现要说明中文含义。',

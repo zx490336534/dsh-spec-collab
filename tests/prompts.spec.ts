@@ -10,6 +10,7 @@ describe('review prompt configuration', () => {
     expect(prompts.productSecond).toBe(DEFAULT_REVIEW_PROMPTS.productSecond)
     expect(prompts.comment).toBe(DEFAULT_REVIEW_PROMPTS.comment)
     expect(prompts.followUp).toBe(DEFAULT_REVIEW_PROMPTS.followUp)
+    expect(DEFAULT_REVIEW_PROMPTS.common).toContain('sourceAnchors')
   })
 
   it('requires custom follow-up prompts to preserve the user content placeholder', () => {

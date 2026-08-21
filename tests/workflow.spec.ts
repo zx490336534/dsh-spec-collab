@@ -48,6 +48,12 @@ describe('workflow state', () => {
     expect(state).toMatchObject({ title: '进入产品确认', command: { kind: 'advance' } })
   })
 
+  it('makes the required AI reread explicit after all human answers are complete', () => {
+    const state = workflowState(requirement({ aiRuns: [run('product-first')], reviewItems: [blockingReview('answered')] }), 'product')
+    expect(state).toMatchObject({ eyebrow: '人工回答已完成', title: '下一步：让 AI 回读全部回答', actionLabel: '让 AI 回读并生成修改', command: { kind: 'request-review', reviewKind: 'product-second' } })
+    expect(state.detail).toContain('不会自动开始')
+  })
+
   it('allows an explicitly delegated question to move into joint review', () => {
     const state = workflowState(requirement({ aiRuns: [run('product-first'), run('product-second')], reviewItems: [blockingReview('joint-review')] }), 'product')
     expect(state).toMatchObject({ title: '进入产品确认', command: { kind: 'advance' } })
