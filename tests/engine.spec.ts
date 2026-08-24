@@ -400,7 +400,7 @@ describe('CollaborationEngine', () => {
     const awaiting = engine.myItems(product, 'awaiting-my-response')
     const initiated = engine.myItems(engineering, 'initiated-by-me')
     expect(awaiting).toHaveLength(1)
-    expect(awaiting[0]).toMatchObject({ category: 'awaiting-my-response', target: { tab: 'discussion' } })
+    expect(awaiting[0]).toMatchObject({ category: 'awaiting-my-response', objectTitle: '自动重试', target: { tab: 'discussion' } })
     expect(initiated).toHaveLength(1)
     expect(initiated[0]).toMatchObject({ category: 'initiated-by-me', sourceId: awaiting[0]?.sourceId })
   })

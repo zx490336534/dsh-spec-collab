@@ -73,7 +73,7 @@ export class CollaborationEngine {
         const assigned = item.assigneeParticipantId === participant.participantId || (item.assigneeParticipantId === undefined && item.assigneeRole === participant.role)
         if (assigned) categories.push(item.type === 'confirm' || item.type === 'reconfirm' ? 'awaiting-my-confirmation' : 'awaiting-my-response')
         if (sourceParticipantId(record, item) === participant.participantId) categories.push('initiated-by-me')
-        for (const current of categories) if (category === undefined || category === current) rows.push({ ...structuredClone(item), category: current, requirementTitle: record.title, target: actionTarget(item) })
+        for (const current of categories) if (category === undefined || category === current) rows.push({ ...structuredClone(item), category: current, requirementTitle: record.title, objectTitle: actionObjectTitle(record, item), target: actionTarget(item) })
       }
     }
     return rows.sort((left, right) => Number(right.blocking) - Number(left.blocking) || right.updatedAt - left.updatedAt)
@@ -685,6 +685,20 @@ function sourceParticipantId(record: RequirementRecord, item: ActionItem): strin
 function actionTarget(item: ActionItem): MyActionItem['target'] {
   const tabs = { 'review-item': 'review', comment: 'discussion', patch: 'patches', decision: 'decisions', confirmation: 'ready' } as const
   return { tab: tabs[item.sourceType], objectId: item.sourceId }
+}
+function actionObjectTitle(record: RequirementRecord, item: ActionItem): string {
+  if (item.sourceType === 'review-item') {
+    const review = record.reviewItems.find(value => value.id === item.sourceId)
+    return review?.question.trim() || review?.statement.trim() || '待处理问题'
+  }
+  if (item.sourceType === 'comment') {
+    const comment = record.comments.find(value => value.id === item.sourceId)
+    return comment?.anchor?.quote.trim() || comment?.body.trim() || '待回复评论'
+  }
+  if (item.sourceType === 'patch') return record.patches.find(value => value.id === item.sourceId)?.summary.trim() || '待审核正文改动'
+  if (item.sourceType === 'decision') return record.decisions.find(value => value.id === item.sourceId)?.question.trim() || '待确认决策'
+  const confirmation = record.confirmations.find(value => value.id === item.sourceId)
+  return confirmation ? `${confirmation.role === 'product' ? '产品' : '研发'}需要重新确认当前版本` : '待确认当前版本'
 }
 function textDiff(before: string, after: string): string {
   if (before === after) return ''

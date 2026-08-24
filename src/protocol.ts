@@ -103,7 +103,7 @@ export interface SaveConflict {
   baseToCurrentDiff: string; baseToDraftDiff: string
 }
 export type MyItemCategory = 'awaiting-my-response' | 'awaiting-my-confirmation' | 'initiated-by-me' | 'possibly-mine-by-ip'
-export interface MyActionItem extends ActionItem { category: MyItemCategory; requirementTitle: string; target: { tab: 'review' | 'discussion' | 'patches' | 'decisions' | 'ready'; objectId: string } }
+export interface MyActionItem extends ActionItem { category: MyItemCategory; requirementTitle: string; objectTitle: string; target: { tab: 'review' | 'discussion' | 'patches' | 'decisions' | 'ready'; objectId: string } }
 
 export type CollaborationAction =
   | { kind: 'requirement.create'; participant: ParticipantSnapshot; title: string; rawRequirement: string; sources: SourceReference[]; workspaceId: string }
