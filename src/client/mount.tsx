@@ -9,6 +9,14 @@ const ACTIVE = 'data-dsh-spec-collab-active'
 const VIEW = '[data-dsh-spec-collab-view]'
 const ACTIVATE_EVENT = 'dsh-panel-activate'
 const CLOSE_EVENT = 'dsh-spec-collab-close'
+const SIDEBAR_COLLAPSED = 'data-sidebar-collapsed'
+
+function isSidebarChromeControl(target: Element | undefined): boolean {
+  const control = target?.closest<HTMLElement>('button, [role="button"]')
+  if (control === undefined || control === null) return false
+  const label = [control.getAttribute('aria-label'), control.getAttribute('title'), control.textContent].filter(Boolean).join(' ')
+  return /侧边栏|边栏|侧栏|sidebar/i.test(label) && /收起|折叠|展开|隐藏|显示|collapse|expand|toggle/i.test(label)
+}
 
 export function mountWorkbench(api: SpecApi): () => void {
   let root: Root | undefined
@@ -34,12 +42,25 @@ export function mountWorkbench(api: SpecApi): () => void {
 
 export function mountSidebarEntry(): () => void {
   let row: HTMLButtonElement | undefined
+  let resizeObserver: ResizeObserver | undefined
+  const syncSidebarState = (): void => {
+    if (!row?.isConnected) return
+    const rect = row.getBoundingClientRect()
+    const hostCollapsed = document.body.hasAttribute('data-dsh-sidebar-collapsed') || Boolean(row.closest('[data-sidebar-collapsed="true"]'))
+    row.toggleAttribute('data-dsh-spec-collab-collapsed', rect.width > 0 ? rect.width < 64 : hostCollapsed)
+  }
   const close = (): void => { document.documentElement.removeAttribute(ACTIVE); row?.classList.remove(css.entryActive!) }
   const closeOnExternalNavigation = (event: MouseEvent): void => {
     if (!document.documentElement.hasAttribute(ACTIVE)) return
     const target = event.target instanceof Element ? event.target : undefined
     if (target?.closest(VIEW) || target?.closest('[data-dsh-spec-collab-entry]')) return
-    close()
+    if (isSidebarChromeControl(target)) return
+    const sidebarCollapsedBefore = document.documentElement.getAttribute(SIDEBAR_COLLAPSED)
+    window.setTimeout(() => {
+      if (!document.documentElement.hasAttribute(ACTIVE)) return
+      if (document.documentElement.getAttribute(SIDEBAR_COLLAPSED) !== sidebarCollapsedBefore) return
+      close()
+    }, 0)
   }
   document.addEventListener('click', closeOnExternalNavigation, true)
   document.addEventListener(CLOSE_EVENT, close)
@@ -53,9 +74,10 @@ export function mountSidebarEntry(): () => void {
       document.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: 'spec-collab' }))
     }
     row?.classList.toggle(css.entryActive!, opening)
+    syncSidebarState()
   }
   const ensure = (): void => {
-    if (row?.isConnected) return
+    if (row?.isConnected) { syncSidebarState(); return }
     const anchor = findSidebarAnchor(document)
     if (anchor === undefined) return
     row = document.createElement('button')
@@ -67,9 +89,13 @@ export function mountSidebarEntry(): () => void {
     row.innerHTML = '<span aria-hidden="true">▤</span><span>需求讨论</span>'
     row.addEventListener('click', toggle)
     anchor.element[anchor.placement](row)
+    resizeObserver?.disconnect()
+    resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(syncSidebarState)
+    resizeObserver?.observe(row)
+    window.setTimeout(syncSidebarState, 0)
   }
-  const observer = new MutationObserver(ensure)
-  observer.observe(document.body, { childList: true, subtree: true })
+  const observer = new MutationObserver(() => { ensure(); syncSidebarState() })
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-dsh-sidebar-collapsed', 'data-sidebar-collapsed'] })
   ensure()
-  return () => { observer.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, close); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
+  return () => { observer.disconnect(); resizeObserver?.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, close); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
 }

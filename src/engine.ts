@@ -12,6 +12,7 @@ export interface AiCoordinator {
 const emptyState = (): CollaborationState => ({ schemaVersion: SCHEMA_VERSION, revision: 0, participants: [], requirements: [] })
 
 type EngineResult = ActionResult
+type DecisionSourceAnchor = NonNullable<Extract<CollaborationAction, { kind: 'decision.create' }>['sourceAnchors']>[number]
 
 export class CollaborationEngine {
   private state: CollaborationState
@@ -170,7 +171,7 @@ export class CollaborationEngine {
       const version = this.versions.save({ requirementId: record.id, baseCommit: action.baseCommit, markdown: action.markdown, participant: action.participant, summary: action.summary })
       const impact = changedScopes(before, action.markdown)
       record.currentCommit = version.commit; record.updatedAt = now; delete record.readyPackage
-      invalidateAffected(record, impact.sections, impact.acceptanceIds)
+      invalidateAffected(record, impact.sections, impact.acceptanceIds, action.markdown)
       record.patches.filter(item => item.status === 'pending').forEach(item => { item.status = 'stale' })
       if (record.stage === 'ready') record.stage = 'joint-review'
       this.persist()
@@ -216,8 +217,11 @@ export class CollaborationEngine {
       const patch = record.patches.find(item => item.id === action.patchId)
       if (patch === undefined || patch.status !== 'pending') throw new Error('pending patch not found')
       const version = this.versions.save({ requirementId: record.id, baseCommit: patch.baseCommit, markdown: patch.proposedMarkdown, participant: action.participant, summary: action.summary })
+      const before = this.versions.read(record.id, record.currentCommit).markdown
+      const impact = changedScopes(before, patch.proposedMarkdown)
       record.currentCommit = version.commit; patch.status = 'accepted'; record.updatedAt = now
       for (const id of patch.affectedReviewItemIds) { const item = record.reviewItems.find(candidate => candidate.id === id); if (item !== undefined) { item.status = 'resolved'; item.updatedAt = now } }
+      invalidateAffected(record, impact.sections, impact.acceptanceIds, patch.proposedMarkdown)
       record.actionItems.filter(task => task.sourceId === patch.id && task.status === 'pending').forEach(task => { task.status = 'handled'; task.updatedAt = now }); this.persist()
       this.enqueueReview(record, action.participant, 'change-review')
     } else if (action.kind === 'patch.reject') {
@@ -225,7 +229,9 @@ export class CollaborationEngine {
       const patch = record.patches.find(item => item.id === action.patchId); if (patch === undefined) throw new Error('patch not found'); patch.status = 'rejected'; this.persist()
     } else if (action.kind === 'decision.create') {
       requireHuman(action.participant)
-      record.decisions.push({ id: randomUUID(), requirementId: record.id, commit: record.currentCommit, question: action.question, options: action.options, decision: action.decision, rationale: action.rationale, confirmer: action.participant, affectedSections: action.affectedSections, affectedAcceptanceIds: action.affectedAcceptanceIds, createdAt: now, status: 'active' }); this.persist()
+      const sourceAnchors = [...(action.sourceAnchors ?? []), ...decisionScopeAnchors(this.versions.read(record.id, record.currentCommit).markdown, action.affectedSections, action.affectedAcceptanceIds)]
+        .filter((anchor, index, anchors) => anchor.quote.trim() !== '' && anchors.findIndex(candidate => normalizeAnchorText(candidate.quote) === normalizeAnchorText(anchor.quote) && normalizeAnchorText(candidate.heading ?? '') === normalizeAnchorText(anchor.heading ?? '')) === index)
+      record.decisions.push({ id: randomUUID(), requirementId: record.id, commit: record.currentCommit, question: action.question, options: action.options, decision: action.decision, rationale: action.rationale, confirmer: action.participant, affectedSections: action.affectedSections, affectedAcceptanceIds: action.affectedAcceptanceIds, ...(sourceAnchors.length > 0 ? { sourceAnchors } : {}), createdAt: now, status: 'active' }); this.persist()
     } else if (action.kind === 'confirmation.create') {
       requireHuman(action.participant)
       if (action.participant.role !== action.role) throw new Error(`${action.role} role is required`)
@@ -333,7 +339,43 @@ function sections(markdown: string): Map<string, string> { const result = new Ma
 function acceptance(markdown: string): Map<string, string> { const result = new Map<string, string>(); for (const match of markdown.matchAll(/\*\*(AC-[A-Za-z0-9-]+)(?:\s+[^*]+)?\*\*\s*[：:]\s*(.+)/g)) result.set(match[1]!, match[2]!.trim()); return result }
 function changedScopes(before: string, after: string): { sections: string[]; acceptanceIds: string[] } { const a = sections(before); const b = sections(after); const sectionNames = new Set([...a.keys(), ...b.keys()]); const acA = acceptance(before); const acB = acceptance(after); const acNames = new Set([...acA.keys(), ...acB.keys()]); return { sections: [...sectionNames].filter(key => a.get(key) !== b.get(key)), acceptanceIds: [...acNames].filter(key => acA.get(key) !== acB.get(key)) } }
 function intersects(left: string[], right: string[]): boolean { return left.some(item => right.includes(item)) }
-function invalidateAffected(record: RequirementRecord, changedSections: string[], changedAcceptanceIds: string[]): void {
+function normalizeAnchorText(value: string): string { return value.replace(/[`*_>#\[\]()~-]/g, '').replace(/\s+/g, '').toLocaleLowerCase() }
+function headingForLine(lines: string[], index: number): string | undefined {
+  for (let cursor = index; cursor >= 0; cursor -= 1) {
+    const match = /^#{1,4}\s+(.+)$/.exec(lines[cursor] ?? '')
+    if (match?.[1]) return match[1].trim()
+  }
+  return undefined
+}
+function decisionScopeAnchors(markdown: string, affectedSections: string[], affectedAcceptanceIds: string[]): DecisionSourceAnchor[] {
+  const anchors: DecisionSourceAnchor[] = []
+  const sectionMap = sections(markdown)
+  for (const section of affectedSections.map(value => value.trim()).filter(Boolean)) {
+    const quote = sectionMap.get(section)?.split('\n').map(line => line.trim()).find(line => line && !/^#+\s+/.test(line))
+    if (quote) anchors.push({ heading: section, quote })
+  }
+  const lines = markdown.split('\n')
+  for (const acceptanceId of affectedAcceptanceIds.map(value => value.trim()).filter(Boolean)) {
+    const index = lines.findIndex(line => normalizeAnchorText(line).includes(normalizeAnchorText(acceptanceId)))
+    if (index >= 0) {
+      const heading = headingForLine(lines, index)
+      anchors.push({ ...(heading ? { heading } : {}), quote: lines[index]!.trim() })
+    }
+  }
+  return anchors
+}
+function decisionAnchorStillExists(markdown: string, anchor: DecisionSourceAnchor): boolean {
+  const quote = normalizeAnchorText(anchor.quote)
+  if (!quote) return false
+  const sectionMap = sections(markdown)
+  const candidates = anchor.heading?.trim() ? [sectionMap.get(anchor.heading.trim()) ?? ''] : [markdown]
+  const context = normalizeAnchorText(`${anchor.prefix ?? ''}${anchor.quote}${anchor.suffix ?? ''}`)
+  return candidates.some(candidate => {
+    const normalized = normalizeAnchorText(candidate)
+    return normalized.includes(context) || normalized.includes(quote)
+  })
+}
+function invalidateAffected(record: RequirementRecord, changedSections: string[], changedAcceptanceIds: string[], currentMarkdown?: string): void {
   for (const confirmation of record.confirmations) {
     if (confirmation.status !== 'active') continue
     const affected = confirmation.scope === 'version' || (confirmation.scope === 'section' && confirmation.scopeId !== undefined && changedSections.includes(confirmation.scopeId)) || (confirmation.scope === 'acceptance-criterion' && confirmation.scopeId !== undefined && changedAcceptanceIds.includes(confirmation.scopeId))
@@ -341,6 +383,7 @@ function invalidateAffected(record: RequirementRecord, changedSections: string[]
   }
   record.reviewItems.filter(item => item.status === 'resolved' && (intersects(item.affectedSections, changedSections) || intersects(item.affectedAcceptanceIds, changedAcceptanceIds))).forEach(item => { item.status = 'invalidated'; item.updatedAt = Date.now() })
   record.decisions.filter(item => item.status === 'active' && (intersects(item.affectedSections, changedSections) || intersects(item.affectedAcceptanceIds, changedAcceptanceIds))).forEach(item => { item.status = 'invalidated' })
+  if (currentMarkdown !== undefined) record.decisions.filter(item => item.status === 'active' && item.sourceAnchors?.some(anchor => !decisionAnchorStillExists(currentMarkdown, anchor))).forEach(item => { item.status = 'invalidated' })
 }
 export function readiness(markdown: string, record: RequirementRecord): ReadinessCheck[] {
   const sectionMap = sections(markdown); const ac = acceptance(markdown)

@@ -5,14 +5,24 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RequirementView } from '../src/protocol.ts'
 import type { SpecApi } from '../src/client/api.ts'
-import { ReviewPanel } from '../src/client/SpecWorkbench.tsx'
+import { DiscussionPanel, InlineCommentComposer, InlineReviewComposer, ReviewPanel, annotationScrollTargets, type EditorSelection } from '../src/client/SpecWorkbench.tsx'
 
 const roots: Array<ReturnType<typeof createRoot>> = [];
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.innerHTML = '' })
 
 describe('review checklist', () => {
-  it('opens a spacious decision dialog and lets a recommendation populate the response', async () => {
+  it('tracks annotation markers against the real ProseMirror scroll container', () => {
+    const root = document.createElement('div')
+    root.innerHTML = '<div class="toastui-editor-main"><div class="toastui-editor-ww-container"><div class="toastui-editor-contents">hidden preview</div><div class="ProseMirror toastui-editor-contents">visible editor</div></div></div>'
+
+    const targets = annotationScrollTargets(root)
+
+    expect(targets[0]?.className).toContain('ProseMirror')
+    expect(targets.some(target => target.classList.contains('toastui-editor-ww-container'))).toBe(true)
+  })
+
+  it('opens a compact inline question bubble and lets a recommendation populate the response', async () => {
     const longQuestion = '当同一个账号在多个设备同时修改退款上限时，应采用最后一次提交、服务端版本优先，还是提示用户解决冲突？'
     const requirement = {
       id: 'requirement-1', currentCommit: 'a'.repeat(40), reviewItems: [{
@@ -27,22 +37,24 @@ describe('review checklist', () => {
     document.body.append(host)
     const root = createRoot(host)
     roots.push(root)
+    const respond = vi.fn(async () => true)
+    const close = vi.fn()
+    const locate = vi.fn()
+    const complete = vi.fn()
 
-    await act(async () => { root.render(<ReviewPanel requirement={requirement} act={vi.fn(async () => true)} api={{} as SpecApi}/>) })
+    await act(async () => {
+      root.render(<InlineReviewComposer item={requirement.reviewItems[0]!} sourceMarkdown={requirement.version.markdown} requirementId={requirement.id} position={{ rect: { top: 24, left: 32 }, placement: 'below', maxHeight: 280 }} busy={false} act={respond} close={close} locateSource={locate} complete={complete}/>)
+    })
 
-    const row = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.includes(longQuestion))
-    expect(row).toBeDefined()
-    expect(row?.getAttribute('title')).toBe(longQuestion)
-    await act(async () => { (row as HTMLButtonElement).focus(); row?.click() })
-
-    const dialog = document.querySelector('[role="dialog"]')
+    const dialog = host.querySelector('[role="dialog"]')
+    expect((dialog as HTMLElement).style.maxHeight).toBe('280px')
     expect(dialog?.textContent).toContain('多端并发修改时的最终生效规则尚未确定')
     expect(dialog?.textContent).toContain(longQuestion)
-    expect(dialog?.textContent).toContain('src/refund/api.ts@abc123')
-    expect(dialog?.textContent).toContain('关联正文')
+    expect(dialog?.textContent).toContain('已有依据')
     expect(dialog?.textContent).toContain('退款上限由服务端版本决定')
     const textarea = dialog?.querySelector('textarea') as HTMLTextAreaElement
     expect(textarea).not.toBeNull()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     expect(document.activeElement).toBe(textarea)
 
     const recommendation = Array.from(dialog?.querySelectorAll('button') ?? []).find(button => button.textContent?.includes('采用服务端版本优先'))
@@ -51,13 +63,17 @@ describe('review checklist', () => {
     expect((dialog?.querySelector('select') as HTMLSelectElement).value).toBe('accept-modified')
     expect(dialog?.textContent).toContain('下一步由 AI 回读并生成正文修改建议')
 
-    const close = dialog?.querySelector('[aria-label="关闭问题窗口"]') as HTMLButtonElement
-    await act(async () => { close.click() })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
-    expect(document.activeElement).toBe(row)
+    const submit = Array.from(dialog?.querySelectorAll('button') ?? []).find(button => button.textContent === '保存回答') as HTMLButtonElement
+    await act(async () => { submit.click() })
+    expect(respond).toHaveBeenCalledOnce()
+    expect(complete).toHaveBeenCalledWith(false)
+
+    const closeButton = dialog?.querySelector('[aria-label="关闭问题窗口"]') as HTMLButtonElement
+    await act(async () => { closeButton.click() })
+    expect(close).toHaveBeenCalledOnce()
   })
 
-  it('opens a requested checklist item directly from the workflow action', async () => {
+  it('routes a requested checklist item to the document inline anchor', async () => {
     const requirement = {
       id: 'requirement-1', currentCommit: 'a'.repeat(40), reviewItems: [{
         id: 'review-1', requirementId: 'requirement-1', commit: 'a'.repeat(40), reviewKind: 'product-first', type: 'scope', severity: 'blocking',
@@ -76,15 +92,12 @@ describe('review checklist', () => {
       root.render(<ReviewPanel requirement={requirement} act={vi.fn(async () => true)} api={{} as SpecApi} openRequest={{ objectId: 'review-1', requestId: 1 }} onLocateSource={locate} onOpenRequestHandled={handled}/>)
     })
 
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('这次是否包含移动端？')
     expect(handled).toHaveBeenCalledWith(1)
-    const locateButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent === '在正文中查看')
-    await act(async () => { locateButton?.click() })
-    expect(locate).toHaveBeenCalledWith('review-1')
+    expect(locate).toHaveBeenCalledWith('review-1', undefined)
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
-  it('saves an answer and opens the next unanswered item without returning to the small panel', async () => {
+  it('saves an inline answer and asks to continue to the next unanswered item', async () => {
     const base = {
       requirementId: 'requirement-1', commit: 'a'.repeat(40), reviewKind: 'product-first' as const, type: 'scope' as const, severity: 'blocking' as const,
       evidence: [], epistemicStatus: 'TO_VERIFY' as const, affectedSections: ['范围与非范围'], affectedAcceptanceIds: [], ownerRole: 'product' as const, status: 'open' as const, createdAt: 1,
@@ -100,14 +113,73 @@ describe('review checklist', () => {
     const root = createRoot(host)
     roots.push(root)
     const respond = vi.fn(async () => true)
+    const complete = vi.fn()
 
-    await act(async () => { root.render(<ReviewPanel requirement={requirement} act={respond} api={{} as SpecApi} openRequest={{ objectId: 'review-1', requestId: 1 }}/>) })
+    await act(async () => {
+      root.render(<InlineReviewComposer item={requirement.reviewItems[0]!} sourceMarkdown={requirement.version.markdown} requirementId={requirement.id} position={{ rect: { top: 24, left: 32 }, placement: 'below' }} nextItemId="review-2" busy={false} act={respond} close={vi.fn()} locateSource={vi.fn()} complete={complete}/>)
+    })
     const firstRecommendation = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.startsWith('包含移动端。'))
     await act(async () => { firstRecommendation?.click() })
-    const continueButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent === '保存并回答下一题')
+    const continueButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent === '保存并下一题')
     await act(async () => { continueButton?.click() })
 
     expect(respond).toHaveBeenCalledOnce()
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('是否需要灰度发布？')
+    expect(complete).toHaveBeenCalledWith(true)
+  })
+
+  it('uses the same source-location action from discussion comments', async () => {
+    const participant = { participantId: 'participant-1', nickname: '听白', role: 'product' as const, kind: 'human' as const }
+    const requirement = {
+      id: 'requirement-1', currentCommit: 'a'.repeat(40), reviewItems: [], aiRuns: [], version: { markdown: '# 登录范围\n\n## 范围与非范围\n\n这次仅包含桌面端。' },
+      comments: [{ id: 'comment-1', requirementId: 'requirement-1', commit: 'a'.repeat(40), anchor: { heading: '范围与非范围', quote: '这次仅包含桌面端。' }, author: participant, body: '是否包含移动端？', replies: [], aiStatus: 'completed', status: 'open', createdAt: 1, updatedAt: 2 }],
+    } as unknown as RequirementView
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    roots.push(root)
+    const locate = vi.fn()
+    const select = vi.fn()
+
+    await act(async () => {
+      root.render(<DiscussionPanel requirement={requirement} focusedCommentId="comment-1" onSelectComment={select} onLocateComment={locate} act={vi.fn(async () => true)} api={{} as SpecApi}/>)
+    })
+
+    expect(host.querySelector('#spec-object-comment-1')?.getAttribute('aria-current')).toBe('true')
+    const locateButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '定位正文')
+    await act(async () => { locateButton?.click() })
+    expect(select).toHaveBeenCalledWith('comment-1')
+    expect(locate).toHaveBeenCalledWith('comment-1')
+  })
+
+  it('starts a discussion from an inline comment bubble', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    roots.push(root)
+    const selection: EditorSelection = { quote: '支持登录用户收藏、取消收藏和查看“我的收藏”。', prefix: '', suffix: '', heading: '范围', rect: { top: 24, left: 32 }, placement: 'below' }
+    const submit = vi.fn(async () => {})
+    const cancel = vi.fn()
+    let text = ''
+    const render = () => root.render(<InlineCommentComposer selection={selection} text={text} setText={value => { text = value; render() }} busy={false} cancel={cancel} submit={submit}/>)
+
+    await act(async () => { render() })
+
+    const dialog = host.querySelector('[role="dialog"]')
+    expect(dialog?.textContent).toContain('范围')
+    expect(dialog?.textContent).toContain('支持登录用户收藏')
+    let submitButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '提交') as HTMLButtonElement
+    expect(submitButton.disabled).toBe(true)
+
+    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
+    await act(async () => { text = '这里是否需要区分图片和视频的收藏规则？'; render() })
+    submitButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '提交') as HTMLButtonElement
+    expect(submitButton.disabled).toBe(false)
+
+    await act(async () => { submitButton.click() })
+    expect(submit).toHaveBeenCalledOnce()
+
+    const closeButton = host.querySelector('[aria-label="取消文字选择"]') as HTMLButtonElement
+    await act(async () => { closeButton.click() })
+    expect(cancel).toHaveBeenCalledOnce()
   })
 })

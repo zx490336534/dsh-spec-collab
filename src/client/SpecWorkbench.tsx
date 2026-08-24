@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import MarkdownIt from 'markdown-it'
 import ToastEditor from '@toast-ui/editor'
 import '@toast-ui/editor/dist/i18n/zh-cn'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
-import type { CollaborationAction, CommentResolution, MyActionItem, ParticipantRole, ParticipantSnapshot, RequirementStage, RequirementVersion, RequirementView, ReviewItemType, ReviewKind, ReviewWorkspaceSummary, SaveConflict } from '../protocol.ts'
+import type { CollaborationAction, CommentResolution, CommentThread, MyActionItem, ParticipantRole, ParticipantSnapshot, RequirementStage, RequirementVersion, RequirementView, ReviewItemType, ReviewKind, ReviewWorkspaceSummary, SaveConflict } from '../protocol.ts'
 import type { SpecApi } from './api.ts'
 import { browserUuid } from './browser-uuid.ts'
-import { reviewBlockSelector, reviewSourceSnippets, reviewTargetElements } from './review-anchors.ts'
+import { commentTargetElements, reviewBlockSelector, reviewSourceSnippets, reviewTargetElements } from './review-anchors.ts'
 import { friendlyActionError, workflowState, type TaskView, type WorkflowCommand, type WorkflowState } from './workflow.ts'
 import css from './workbench.module.css'
 
@@ -24,9 +24,48 @@ const markdownShortcutsPlugin = () => ({ wysiwygPlugins: [() => inputRules({ rul
 ] })] })
 type PrimaryMode = 'tasks' | 'discussion' | 'records'
 type RecordView = 'decisions' | 'versions'
-type CommentAnchor = { quote: string; prefix: string; suffix: string; heading?: string }
-type EditorSelection = CommentAnchor & { rect: { top: number; left: number } }
+export type CommentAnchor = { quote: string; prefix: string; suffix: string; heading?: string }
+export type InlinePopoverPosition = { rect: { top: number; left: number }; placement: 'above' | 'below'; maxHeight?: number }
+export type EditorSelection = CommentAnchor & InlinePopoverPosition
 type ReviewOpenRequest = { objectId: string; requestId: number }
+type InlineReviewTarget = { itemId: string; sourceKey?: string } & Partial<InlinePopoverPosition>
+type DocumentAnchorFocus = { kind: 'review'; objectId: string; sourceKey?: string } | { kind: 'comment'; objectId: string }
+const inlineReviewPopoverSize = { width: 520, height: 620 } as const
+function inlinePopoverPositionFromRect(rect: Pick<DOMRect, 'top' | 'bottom' | 'left'>, size: { width: number; height: number }): InlinePopoverPosition {
+  const padding = 12
+  const gap = 10
+  const viewportMaxHeight = Math.max(160, window.innerHeight - padding * 2)
+  const desiredHeight = Math.min(size.height, viewportMaxHeight)
+  const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap - padding)
+  const spaceAbove = Math.max(0, rect.top - gap - padding)
+  const usefulBelowHeight = Math.min(desiredHeight, size.height > 360 ? 280 : 180)
+  const placement: InlinePopoverPosition['placement'] = spaceBelow >= usefulBelowHeight || spaceBelow >= spaceAbove ? 'below' : 'above'
+  const available = placement === 'below' ? spaceBelow : spaceAbove
+  const maxHeight = Math.max(160, Math.min(desiredHeight, available || viewportMaxHeight))
+  const rawTop = placement === 'below' ? rect.bottom + gap : rect.top - maxHeight - gap
+  const top = Math.min(Math.max(padding, rawTop), Math.max(padding, window.innerHeight - maxHeight - padding))
+  const left = Math.min(Math.max(padding, rect.left), Math.max(padding, window.innerWidth - size.width - padding))
+  return { rect: { top, left }, placement, maxHeight }
+}
+function visibleEditorContents(root: HTMLElement | null | undefined): HTMLElement | undefined {
+  const candidates = Array.from(root?.querySelectorAll<HTMLElement>('.toastui-editor-contents') ?? [])
+  const visible = candidates.filter(element => {
+    const rect = element.getBoundingClientRect()
+    const style = window.getComputedStyle(element)
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+  })
+  return visible.find(element => element.classList.contains('ProseMirror')) ?? visible[0] ?? candidates.find(element => element.classList.contains('ProseMirror')) ?? candidates.at(-1)
+}
+export function annotationScrollTargets(root: HTMLElement | null | undefined): HTMLElement[] {
+  if (!root) return []
+  const targets: HTMLElement[] = []
+  const add = (element: HTMLElement | null | undefined): void => {
+    if (element && !targets.includes(element)) targets.push(element)
+  }
+  add(visibleEditorContents(root))
+  root.querySelectorAll<HTMLElement>('.ProseMirror.toastui-editor-contents, .toastui-editor-ww-container, .toastui-editor-main').forEach(add)
+  return targets
+}
 function newParticipant(): ParticipantSnapshot { return { participantId: browserUuid(), nickname: '', role: 'product', kind: 'human' } }
 function loadParticipant(): ParticipantSnapshot { try { const value = JSON.parse(localStorage.getItem('dsh-spec-collab.participant') ?? '') as ParticipantSnapshot; if (value.participantId) return { ...value, kind: 'human' } } catch {} return newParticipant() }
 function stageLabel(stage: RequirementStage): string { return ({ 'product-review': '产品审核', 'product-confirmation': '产品确认', 'joint-review': '产研共审', ready: 'Ready' })[stage] }
@@ -67,8 +106,8 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const [mobilePane, setMobilePane] = useState<'spec' | 'collab'>('spec')
   const [reviewOpenRequest, setReviewOpenRequest] = useState<ReviewOpenRequest>()
   const reviewOpenRequestId = useRef(0)
-  const [focusedReviewId, setFocusedReviewId] = useState<string>()
-  const [reviewSourceFocusRequest, setReviewSourceFocusRequest] = useState(0)
+  const [documentFocus, setDocumentFocus] = useState<DocumentAnchorFocus>()
+  const [documentFocusRequest, setDocumentFocusRequest] = useState(0)
   const [draft, setDraft] = useState('')
   const [summary, setSummary] = useState('')
   const [notice, setNotice] = useState('')
@@ -77,8 +116,8 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const [mergeDraft, setMergeDraft] = useState('')
   const [myItems, setMyItems] = useState<MyActionItem[]>([])
   const [commentText, setCommentText] = useState('')
-  const [selection, setSelection] = useState<CommentAnchor>()
   const [draftSelection, setDraftSelection] = useState<EditorSelection>()
+  const [inlineReview, setInlineReview] = useState<InlineReviewTarget>()
   const visibleRequirements = requirements.filter(item => Boolean(item.archivedAt) === showArchived)
   const selected = requirements.find(item => item.id === selectedId) ?? visibleRequirements[0]
   const manageTarget = requirements.find(item => item.id === manageTargetId)
@@ -86,15 +125,25 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const currentMyItems = selected ? myItems.filter(item => item.requirementId === selected.id) : []
   const currentReviews = selected?.reviewItems.filter(item => item.commit === selected.currentCommit && !['resolved', 'invalidated', 'non-blocking-verify'].includes(item.status)) ?? []
   const documentReviews = useMemo(() => selected?.reviewItems.filter(item => item.commit === selected.currentCommit && !['resolved', 'invalidated'].includes(item.status)).slice().sort((left, right) => Number(right.status !== 'non-blocking-verify') - Number(left.status !== 'non-blocking-verify') || Number(right.severity === 'blocking') - Number(left.severity === 'blocking') || right.updatedAt - left.updatedAt) ?? [], [selected?.reviewItems, selected?.currentCommit])
+  const documentComments = useMemo(() => selected?.comments.filter(item => item.commit === selected.currentCommit && !['invalidated', 'orphaned'].includes(item.status)).slice().sort((left, right) => Number(right.status === 'open') - Number(left.status === 'open') || right.updatedAt - left.updatedAt) ?? [], [selected?.comments, selected?.currentCommit])
+  const focusedReviewId = documentFocus?.kind === 'review' ? documentFocus.objectId : undefined
+  const focusedCommentId = documentFocus?.kind === 'comment' ? documentFocus.objectId : undefined
+  const inlineReviewItem = selected?.reviewItems.find(item => item.id === inlineReview?.itemId)
+  const nextInlineReview = selected && inlineReviewItem ? currentReviews.find(item => item.status === 'open' && item.id !== inlineReviewItem.id) : undefined
   const pendingPatches = selected?.patches.filter(item => item.baseCommit === selected.currentCommit && item.status === 'pending') ?? []
   const openDiscussions = selected?.comments.filter(item => item.commit === selected.currentCommit && item.status === 'open').length ?? 0
   const failedChecks = selected?.readiness.filter(item => !item.passed).length ?? 0
+  const openReviewCount = currentReviews.filter(item => item.status === 'open').length
+  const blockingReviewCount = currentReviews.filter(item => item.status === 'open' && item.severity === 'blocking').length
+  const activeDecisionCount = selected?.decisions.filter(item => item.commit === selected.currentCommit && item.status === 'active').length ?? 0
+  const invalidatedDecisionCount = selected?.decisions.filter(item => item.status === 'invalidated').length ?? 0
+  const runningAiCount = selected?.aiRuns.filter(item => item.commit === selected.currentCommit && ['queued', 'running'].includes(item.status)).length ?? 0
   const workflow = selected ? workflowState(selected, participant.role) : undefined
 
   const refresh = async (): Promise<void> => { try { const state = await api.state(); setRequirements(state.requirements); setParticipantBindings(state.participants); const binding = state.participants.find(item => item.participantId === participant.participantId); if (binding && binding.role !== participant.role) setParticipant(current => ({ ...current, role: binding.role })); setSelectedId(current => current && state.requirements.some(item => item.id === current) ? current : state.requirements[0]?.id) } catch (error) { setNotice(error instanceof Error ? error.message : String(error)) } }
   useEffect(() => { void refresh(); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))); return api.events(() => { void refresh() }) }, [])
   useEffect(() => { if (selected) setDraft(selected.version.markdown) }, [selected?.id, selected?.currentCommit])
-  useEffect(() => { setFocusedReviewId(undefined); setDraftSelection(undefined) }, [selected?.id, selected?.currentCommit])
+  useEffect(() => { setDocumentFocus(undefined); setDraftSelection(undefined); setCommentText(''); setInlineReview(undefined) }, [selected?.id, selected?.currentCommit])
   useEffect(() => { localStorage.setItem('dsh-spec-collab.participant', JSON.stringify(participant)) }, [participant])
   useEffect(() => { localStorage.setItem('dsh-spec-collab.documents-width', String(documentsWidth)) }, [documentsWidth])
   useEffect(() => { localStorage.setItem('dsh-spec-collab.review-width', String(reviewWidth)) }, [reviewWidth])
@@ -125,20 +174,50 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const requestReview = async (reviewKind: ReviewKind): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'review.request', participant: actor, requirementId: selected.id, reviewKind })) }
   const confirm = async (role: ParticipantRole): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'confirmation.create', participant: actor, requirementId: selected.id, role, scope: 'version' })) }
   const advance = async (): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'stage.advance', participant: actor, requirementId: selected.id })) }
-  const focusReviewItem = (objectId: string): void => {
-    setFocusedReviewId(objectId)
-    setReviewSourceFocusRequest(value => value + 1)
+  const scrollToCollabObject = (objectId: string): void => {
+    window.setTimeout(() => document.getElementById(`spec-object-${objectId}`)?.scrollIntoView({ block: 'center' }), 100)
   }
-  const openReviewItem = (objectId: string, pane: 'spec' | 'collab' = 'collab'): void => {
+  const focusDocumentAnchor = (focus: DocumentAnchorFocus): void => {
+    setDocumentFocus(focus)
+    setDocumentFocusRequest(value => value + 1)
+  }
+  const focusReviewItem = (objectId: string, sourceKey?: string): void => {
+    focusDocumentAnchor({ kind: 'review', objectId, ...(sourceKey ? { sourceKey } : {}) })
+  }
+  const focusCommentItem = (objectId: string): void => {
+    focusDocumentAnchor({ kind: 'comment', objectId })
+  }
+  const openReviewItem = (objectId: string, position?: InlinePopoverPosition, sourceKey?: string, pane: 'spec' | 'collab' = 'spec'): void => {
     setPrimaryMode('tasks')
     setTaskView('review')
+    if (pane === 'collab') setReviewOpen(true)
+    setMobilePane('spec')
+    setDraftSelection(undefined)
+    setCommentText('')
+    focusReviewItem(objectId, sourceKey)
+    setInlineReview({ itemId: objectId, ...(sourceKey ? { sourceKey } : {}), ...(position ? { rect: position.rect, placement: position.placement, ...(position.maxHeight ? { maxHeight: position.maxHeight } : {}) } : {}) })
+    if (!position) {
+      window.setTimeout(() => {
+        const fallbackPosition = inlinePopoverPositionFromRect({ top: 144, bottom: 154, left: Math.max(12, window.innerWidth / 2 - inlineReviewPopoverSize.width / 2) }, inlineReviewPopoverSize)
+        setInlineReview(current => current?.itemId === objectId && !current.rect ? { ...current, rect: fallbackPosition.rect, placement: fallbackPosition.placement, ...(fallbackPosition.maxHeight ? { maxHeight: fallbackPosition.maxHeight } : {}) } : current)
+      }, 420)
+    }
+  }
+  const updateInlineReviewPosition = (objectId: string, position: InlinePopoverPosition, sourceKey?: string): void => {
+    setInlineReview(current => current?.itemId === objectId ? { itemId: objectId, ...(sourceKey ? { sourceKey } : current.sourceKey ? { sourceKey: current.sourceKey } : {}), rect: position.rect, placement: position.placement, ...(position.maxHeight ? { maxHeight: position.maxHeight } : {}) } : current)
+  }
+  const openCommentItem = (objectId: string, pane: 'spec' | 'collab' = 'collab'): void => {
+    setPrimaryMode('discussion')
     setReviewOpen(true)
     setMobilePane(pane)
-    focusReviewItem(objectId)
-    setReviewOpenRequest({ objectId, requestId: ++reviewOpenRequestId.current })
+    focusCommentItem(objectId)
+    scrollToCollabObject(objectId)
   }
-  const locateReviewItem = (objectId: string): void => {
-    focusReviewItem(objectId)
+  const locateReviewItem = (objectId: string, sourceKey?: string): void => {
+    openReviewItem(objectId, undefined, sourceKey)
+  }
+  const locateCommentItem = (objectId: string): void => {
+    focusCommentItem(objectId)
     setMobilePane('spec')
   }
   const executeWorkflow = async (command: WorkflowCommand): Promise<void> => {
@@ -159,11 +238,28 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   }
   const openMyItem = (item: MyActionItem): void => {
     if (item.target.tab === 'review') { openReviewItem(item.target.objectId); return }
-    if (item.target.tab === 'discussion') setPrimaryMode('discussion')
+    if (item.target.tab === 'discussion') { openCommentItem(item.target.objectId); return }
     else if (item.target.tab === 'decisions') { setPrimaryMode('records'); setRecordView('decisions') }
     else { setPrimaryMode('tasks'); setTaskView(item.target.tab === 'patches' ? 'patches' : item.target.tab === 'ready' ? 'ready' : 'review') }
     setMobilePane('collab')
-    window.setTimeout(() => document.getElementById(`spec-object-${item.target.objectId}`)?.scrollIntoView({ block: 'center' }), 100)
+    scrollToCollabObject(item.target.objectId)
+  }
+  const openTaskView = (view: TaskView): void => {
+    setPrimaryMode('tasks')
+    setTaskView(view)
+    setReviewOpen(true)
+    setMobilePane('collab')
+  }
+  const openDiscussionView = (): void => {
+    setPrimaryMode('discussion')
+    setReviewOpen(true)
+    setMobilePane('collab')
+  }
+  const openRecordView = (view: RecordView): void => {
+    setPrimaryMode('records')
+    setRecordView(view)
+    setReviewOpen(true)
+    setMobilePane('collab')
   }
   const resizePane = (side: 'documents' | 'review', event: ReactPointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -180,15 +276,24 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const archiveRequirement = async (target: RequirementView): Promise<void> => { const archived = !target.archivedAt; if (await act(actor => ({ kind: 'requirement.archive', participant: actor, requirementId: target.id, archived }))) { setManageMenuId(undefined); setSelectedId(visibleRequirements.find(item => item.id !== target.id)?.id) } }
   const deleteRequirement = async (): Promise<void> => { if (!manageTarget) return; if (await act(actor => ({ kind: 'requirement.delete', participant: actor, requirementId: manageTarget.id }))) { setDeleteOpen(false); setManageMenuId(undefined); setManageTargetId(undefined) } }
 
-  const captureSelection = (): void => {
-    if (!draftSelection) return
-    setSelection(draftSelection)
-    setDraftSelection(undefined)
-    setPrimaryMode('discussion')
-    setReviewOpen(true)
-    setMobilePane('collab')
+  const updateDraftSelection = (value?: EditorSelection): void => {
+    if (!value) {
+      setDraftSelection(current => commentText.trim() ? current : undefined)
+      return
+    }
+    const sameAnchor = draftSelection?.quote === value.quote && draftSelection.prefix === value.prefix && draftSelection.suffix === value.suffix && draftSelection.heading === value.heading
+    if (!sameAnchor) setCommentText('')
+    setDraftSelection(value)
+    setInlineReview(undefined)
+    setDocumentFocus(undefined)
   }
-  const addComment = async (): Promise<void> => { if (!selected || !selection) return; const ok = await act(actor => ({ kind: 'comment.create', participant: actor, requirementId: selected.id, commit: selected.currentCommit, anchor: selection, body: commentText })); if (ok) { setSelection(undefined); setCommentText(''); setNotice('讨论已提交，AI 正在结合正文和工作区上下文分析') } }
+  const cancelCommentDraft = (): void => { setDraftSelection(undefined); setCommentText('') }
+  const addComment = async (): Promise<void> => {
+    if (!selected || !draftSelection || !commentText.trim()) return
+    const anchor: CommentAnchor = { quote: draftSelection.quote, prefix: draftSelection.prefix, suffix: draftSelection.suffix, ...(draftSelection.heading ? { heading: draftSelection.heading } : {}) }
+    const ok = await act(actor => ({ kind: 'comment.create', participant: actor, requirementId: selected.id, commit: selected.currentCommit, anchor, body: commentText.trim() }))
+    if (ok) { setDraftSelection(undefined); setCommentText(''); setNotice('讨论已提交，AI 正在结合正文和工作区上下文分析') }
+  }
 
   return <div className={css.workbench}>
     <header className={css.header}>
@@ -214,8 +319,9 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
       <div className={`${css.resizer} ${documentsOpen ? '' : css.resizerHidden}`} role="separator" aria-label="调整需求栏宽度" aria-orientation="vertical" onPointerDown={event => resizePane('documents', event)}/>
       <main className={css.editorPane}>
         <div className={css.toolbar}><div className={css.editorTitle}>{!documentsOpen && <button className={css.iconButton} aria-label="展开需求栏" title="展开需求栏" onClick={() => setDocumentsOpen(true)}>›</button>}<div><span>正式需求</span><strong>需求正文</strong></div></div><div><span className={draft !== selected?.version.markdown ? css.unsaved : css.editorMeta}>{draft !== selected?.version.markdown ? '有未保存改动' : '所有改动已保存'}</span><input className={css.summaryInput} required aria-label="说明本次改动" value={summary} onChange={event => setSummary(event.target.value)} placeholder="简要说明本次改动"/><button className={css.saveButton} disabled={busy || !selected || draft === selected.version.markdown || !summary.trim()} onClick={() => void save()}>保存版本</button>{!reviewOpen && <button className={css.iconButton} aria-label="展开下一步面板" title="展开下一步面板" onClick={() => setReviewOpen(true)}>‹</button>}</div></div>
-        {draftSelection && <div className={css.selectionPrompt} role="toolbar" aria-label="选中文字操作" style={{ top: draftSelection.rect.top, left: draftSelection.rect.left }}><span>“{draftSelection.quote.replace(/\s+/g, ' ').slice(0, 42)}{draftSelection.quote.length > 42 ? '…' : ''}”</span><button className={css.commentAction} onClick={captureSelection}>就这段提问</button><button aria-label="取消文字选择" title="取消" onClick={() => setDraftSelection(undefined)}>×</button></div>}
-        {!selected ? <div className={css.emptyMain}><div><span>从问题到共识</span><h2>创建第一份需求</h2><p>写下用户问题和期望结果，AI 会协助补齐范围、规则与验收标准。</p><button className={css.execute} onClick={() => { setCreateOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))) }}>新建需求</button></div></div> : <div className={css.editorBody}><RichMarkdownEditor key={`${selected.id}:${selected.currentCommit}`} markdown={draft} reviewItems={documentReviews} selectedReviewId={focusedReviewId} focusRequest={reviewSourceFocusRequest} onChange={setDraft} onSelection={value => { setDraftSelection(value); if (value) setFocusedReviewId(undefined) }} onOpenReview={openReviewItem}/></div>}
+        {draftSelection && <InlineCommentComposer selection={draftSelection} text={commentText} setText={setCommentText} busy={busy} cancel={cancelCommentDraft} submit={addComment}/>}
+        {inlineReviewItem && inlineReview?.rect && inlineReview.placement && <InlineReviewComposer item={inlineReviewItem} sourceMarkdown={selected?.version.markdown ?? ''} requirementId={selected?.id ?? ''} position={{ rect: inlineReview.rect, placement: inlineReview.placement, ...(inlineReview.maxHeight ? { maxHeight: inlineReview.maxHeight } : {}) }} nextItemId={nextInlineReview?.id} busy={busy} act={act} close={() => setInlineReview(undefined)} locateSource={sourceKey => locateReviewItem(inlineReviewItem.id, sourceKey)} complete={continueToNext => { if (continueToNext && nextInlineReview) openReviewItem(nextInlineReview.id); else setInlineReview(undefined) }}/>}
+        {!selected ? <div className={css.emptyMain}><div><span>从问题到共识</span><h2>创建第一份需求</h2><p>写下用户问题和期望结果，AI 会协助补齐范围、规则与验收标准。</p><button className={css.execute} onClick={() => { setCreateOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))) }}>新建需求</button></div></div> : <><DocumentCollabBar activeMode={primaryMode} activeTaskView={taskView} activeRecordView={recordView} stats={{ openReviews: openReviewCount, blockingReviews: blockingReviewCount, openDiscussions, pendingPatches: pendingPatches.length, activeDecisions: activeDecisionCount, invalidatedDecisions: invalidatedDecisionCount, runningAi: runningAiCount, dirty: draft !== selected.version.markdown }} onOpenReviews={() => openTaskView('review')} onOpenDiscussion={openDiscussionView} onOpenPatches={() => openTaskView('patches')} onOpenDecisions={() => openRecordView('decisions')}/><div className={css.editorBody}><RichMarkdownEditor key={`${selected.id}:${selected.currentCommit}`} markdown={draft} reviewItems={documentReviews} comments={documentComments} documentFocus={documentFocus} focusRequest={documentFocusRequest} onChange={setDraft} onSelection={updateDraftSelection} onOpenReview={openReviewItem} onReviewLocated={updateInlineReviewPosition} onOpenComment={openCommentItem}/></div></>}
       </main>
       <div className={`${css.resizer} ${reviewOpen ? '' : css.resizerHidden}`} role="separator" aria-label="调整协作栏宽度" aria-orientation="vertical" onPointerDown={event => resizePane('review', event)}/>
       <aside className={`${css.review} ${reviewOpen ? '' : css.paneClosed}`} aria-label="需求协作">
@@ -226,7 +332,7 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
           <div className={css.contextNav} role="tablist" aria-label="待处理内容"><button role="tab" aria-selected={taskView === 'review'} className={taskView === 'review' ? css.activeContext : ''} onClick={() => setTaskView('review')}>问题{currentReviews.length > 0 && <span>{currentReviews.length}</span>}</button><button role="tab" aria-selected={taskView === 'patches'} className={taskView === 'patches' ? css.activeContext : ''} onClick={() => setTaskView('patches')}>AI 建议{pendingPatches.length > 0 && <span>{pendingPatches.length}</span>}</button><button role="tab" aria-selected={taskView === 'ready'} className={taskView === 'ready' ? css.activeContext : ''} onClick={() => setTaskView('ready')}>完成条件{failedChecks > 0 && <span>{failedChecks}</span>}</button></div>
           <div className={css.threadList}>{taskView === 'review' && <ReviewPanel requirement={selected} act={act} api={api} focusedItemId={focusedReviewId} openRequest={reviewOpenRequest} onSelectReview={focusReviewItem} onLocateSource={locateReviewItem} onOpenRequestHandled={requestId => setReviewOpenRequest(current => current?.requestId === requestId ? undefined : current)}/>} {taskView === 'patches' && <PatchPanel requirement={selected} act={act}/>} {taskView === 'ready' && <ReadyPanel requirement={selected} act={act}/>}</div>
         </>}
-        {selected && primaryMode === 'discussion' && <div className={css.threadList}><DiscussionPanel requirement={selected} selection={selection} text={commentText} setText={setCommentText} cancel={() => setSelection(undefined)} submit={addComment} participant={participant} act={act} api={api}/></div>}
+        {selected && primaryMode === 'discussion' && <div className={css.threadList}><DiscussionPanel requirement={selected} focusedCommentId={focusedCommentId} onSelectComment={focusCommentItem} onLocateComment={locateCommentItem} act={act} api={api}/></div>}
         {selected && primaryMode === 'records' && <><div className={css.contextNav} role="tablist" aria-label="需求记录"><button role="tab" aria-selected={recordView === 'decisions'} className={recordView === 'decisions' ? css.activeContext : ''} onClick={() => setRecordView('decisions')}>关键决策</button><button role="tab" aria-selected={recordView === 'versions'} className={recordView === 'versions' ? css.activeContext : ''} onClick={() => setRecordView('versions')}>版本历史</button></div><div className={css.threadList}>{recordView === 'decisions' && <DecisionPanel requirement={selected} act={act}/>} {recordView === 'versions' && <VersionPanel requirement={selected} api={api}/>}</div></>}
         {!selected && <div className={css.emptyAside}><strong>等待创建需求</strong><p>创建后，下一步操作会显示在这里。</p></div>}
       </aside>
@@ -261,8 +367,51 @@ function TaskQueue({ items, open }: { items: MyActionItem[]; open: (item: MyActi
   return <details className={css.taskQueue}><summary><span>与你相关的事项</span><b>{items.length}</b></summary><div>{sorted.map(item => <button key={item.id} onClick={() => open(item)}><span>{item.blocking ? '优先' : '普通'}</span><div><strong>{taskTypeLabel[item.type]}</strong><small>{new Date(item.updatedAt).toLocaleString()}</small></div><i aria-hidden="true">›</i></button>)}</div></details>
 }
 
-type ReviewDocumentMarker = { itemId: string; title: string; top: number; left: number; blocking: boolean }
-function RichMarkdownEditor({ markdown, reviewItems, selectedReviewId, focusRequest, onChange, onSelection, onOpenReview }: { markdown: string; reviewItems: ReviewItemView[]; selectedReviewId?: string | undefined; focusRequest: number; onChange: (markdown: string) => void; onSelection: (selection?: EditorSelection) => void; onOpenReview: (itemId: string) => void }) {
+type DocumentCollabStats = { openReviews: number; blockingReviews: number; openDiscussions: number; pendingPatches: number; activeDecisions: number; invalidatedDecisions: number; runningAi: number; dirty: boolean }
+function DocumentCollabBar({ activeMode, activeTaskView, activeRecordView, stats, onOpenReviews, onOpenDiscussion, onOpenPatches, onOpenDecisions }: { activeMode: PrimaryMode; activeTaskView: TaskView; activeRecordView: RecordView; stats: DocumentCollabStats; onOpenReviews: () => void; onOpenDiscussion: () => void; onOpenPatches: () => void; onOpenDecisions: () => void }) {
+  const reviewActive = activeMode === 'tasks' && activeTaskView === 'review'
+  const patchActive = activeMode === 'tasks' && activeTaskView === 'patches'
+  const discussionActive = activeMode === 'discussion'
+  const decisionsActive = activeMode === 'records' && activeRecordView === 'decisions'
+  return <section className={css.editorCollabBar} aria-label="正文协作状态">
+    <div className={css.collabBarState}>
+      <span className={stats.dirty ? css.collabStateDirty : css.collabStateSaved}>{stats.dirty ? '草稿未保存' : '当前正文'}</span>
+      {stats.runningAi > 0 && <span className={css.collabStateRunning}><i className={css.runningDot}/>AI 分析中 · {stats.runningAi}</span>}
+    </div>
+    <div className={css.collabBarActions}>
+      <button type="button" className={`${css.collabMetric} ${reviewActive ? css.collabMetricActive : ''} ${stats.blockingReviews > 0 ? css.collabMetricWarn : ''}`} aria-pressed={reviewActive} onClick={onOpenReviews}><b>{stats.openReviews}</b><span>待回答问题</span>{stats.blockingReviews > 0 && <small>{stats.blockingReviews} 阻塞</small>}</button>
+      <button type="button" className={`${css.collabMetric} ${discussionActive ? css.collabMetricActive : ''}`} aria-pressed={discussionActive} onClick={onOpenDiscussion}><b>{stats.openDiscussions}</b><span>打开讨论</span></button>
+      <button type="button" className={`${css.collabMetric} ${patchActive ? css.collabMetricActive : ''}`} aria-pressed={patchActive} onClick={onOpenPatches}><b>{stats.pendingPatches}</b><span>AI 建议</span></button>
+      <button type="button" className={`${css.collabMetric} ${decisionsActive ? css.collabMetricActive : ''} ${stats.invalidatedDecisions > 0 ? css.collabMetricWarn : ''}`} aria-pressed={decisionsActive} onClick={onOpenDecisions}><b>{stats.activeDecisions}</b><span>生效决策</span>{stats.invalidatedDecisions > 0 && <small>{stats.invalidatedDecisions} 作废</small>}</button>
+    </div>
+  </section>
+}
+
+export function InlineCommentComposer({ selection, text, setText, busy, cancel, submit }: { selection: EditorSelection; text: string; setText: (value: string) => void; busy: boolean; cancel: () => void; submit: () => Promise<void> }) {
+  const quote = selection.quote.replace(/\s+/g, ' ').trim()
+  const excerpt = quote.length > 72 ? `${quote.slice(0, 72)}…` : quote
+  const canSubmit = !busy && Boolean(text.trim())
+  return <form className={`${css.selectionPrompt} ${selection.placement === 'above' ? css.selectionPromptAbove : css.selectionPromptBelow}`} role="dialog" aria-label="围绕选中正文发起讨论" style={{ top: selection.rect.top, left: selection.rect.left }} onSubmit={event => { event.preventDefault(); if (canSubmit) void submit() }} onKeyDown={event => {
+    if (event.key === 'Escape') { event.preventDefault(); cancel() }
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSubmit) { event.preventDefault(); void submit() }
+  }}>
+    <div className={css.selectionPromptHead}>
+      <div><b>{selection.heading?.trim() || '正文片段'}</b><small>{excerpt}</small></div>
+      <button type="button" className={css.selectionPromptClose} aria-label="取消文字选择" title="取消" onClick={cancel}>×</button>
+    </div>
+    <textarea required autoFocus aria-label="讨论内容" value={text} onChange={event => setText(event.target.value)} placeholder="直接写下问题或补充意见"/>
+    <div className={css.selectionPromptActions}>
+      <small>提交后 AI 会结合正文和工作区上下文分析。</small>
+      <div className={css.selectionPromptButtons}>
+        <button type="button" className={css.selectionPromptCancel} onClick={cancel}>取消</button>
+        <button type="submit" className={css.selectionPromptSubmit} disabled={!canSubmit}>{busy ? '提交中' : '提交'}</button>
+      </div>
+    </div>
+  </form>
+}
+
+type DocumentMarker = { kind: 'review' | 'comment'; objectId: string; label: string; title: string; top: number; left: number; highlightTop: number; highlightLeft: number; highlightWidth: number; highlightHeight: number; blocking: boolean; selected: boolean }
+function RichMarkdownEditor({ markdown, reviewItems, comments, documentFocus, focusRequest, onChange, onSelection, onOpenReview, onReviewLocated, onOpenComment }: { markdown: string; reviewItems: ReviewItemView[]; comments: CommentThread[]; documentFocus?: DocumentAnchorFocus | undefined; focusRequest: number; onChange: (markdown: string) => void; onSelection: (selection?: EditorSelection) => void; onOpenReview: (itemId: string, position?: InlinePopoverPosition, sourceKey?: string) => void; onReviewLocated: (itemId: string, position: InlinePopoverPosition, sourceKey?: string) => void; onOpenComment: (commentId: string) => void }) {
   const shell = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const instance = useRef<ToastEditor>()
@@ -271,39 +420,74 @@ function RichMarkdownEditor({ markdown, reviewItems, selectedReviewId, focusRequ
   const onChangeRef = useRef(onChange)
   const onSelectionRef = useRef(onSelection)
   const onOpenReviewRef = useRef(onOpenReview)
+  const onReviewLocatedRef = useRef(onReviewLocated)
+  const onOpenCommentRef = useRef(onOpenComment)
   const reviewItemsRef = useRef(reviewItems)
-  const selectedReviewIdRef = useRef(selectedReviewId)
+  const commentsRef = useRef(comments)
+  const documentFocusRef = useRef(documentFocus)
   const syncAnnotationsRef = useRef<() => void>(() => {})
-  const [markers, setMarkers] = useState<ReviewDocumentMarker[]>([])
+  const [markers, setMarkers] = useState<DocumentMarker[]>([])
   onChangeRef.current = onChange
   onSelectionRef.current = onSelection
   onOpenReviewRef.current = onOpenReview
+  onReviewLocatedRef.current = onReviewLocated
+  onOpenCommentRef.current = onOpenComment
   reviewItemsRef.current = reviewItems
-  selectedReviewIdRef.current = selectedReviewId
+  commentsRef.current = comments
+  documentFocusRef.current = documentFocus
   useEffect(() => {
     if (!host.current || !shell.current) return
     const editor = new ToastEditor({ el: host.current, initialValue: markdown, initialEditType: 'wysiwyg', hideModeSwitch: true, toolbarItems: [], plugins: [markdownShortcutsPlugin], height: '100%', language: 'zh-CN', usageStatistics: false, autofocus: false })
     const markInteraction = (): void => { interacted.current = true }
     let frame = 0
     const syncAnnotations = (): void => {
-      const editorRoot = host.current?.querySelector<HTMLElement>('.toastui-editor-contents')
+      const editorRoot = visibleEditorContents(host.current)
       const shellElement = shell.current
       if (!editorRoot || !shellElement) return
-      const selectedSourceClass = css.reviewSourceSelected!
-      editorRoot.querySelectorAll<HTMLElement>(`.${selectedSourceClass}`).forEach(element => element.classList.remove(selectedSourceClass))
+      const reviewSourceClass = css.reviewSourceSelected!
+      const commentSourceClass = css.commentSourceSelected!
+      editorRoot.querySelectorAll<HTMLElement>('[data-annotation-kind]').forEach(element => { element.removeAttribute('data-annotation-kind'); element.removeAttribute('data-annotation-selected') })
+      editorRoot.querySelectorAll<HTMLElement>(`.${reviewSourceClass}, .${commentSourceClass}`).forEach(element => element.classList.remove(reviewSourceClass, commentSourceClass))
       const shellRect = shellElement.getBoundingClientRect()
       const slots = new Map<HTMLElement, number>()
-      const nextMarkers: ReviewDocumentMarker[] = []
-      reviewItemsRef.current.forEach(item => {
-        const targets = reviewTargetElements(editorRoot, item)
-        if (item.id === selectedReviewIdRef.current) targets.forEach(target => target.classList.add(selectedSourceClass))
-        const target = targets[0]
-        if (!target) return
+      const nextMarkers: DocumentMarker[] = []
+      const focus = documentFocusRef.current
+      const addMarker = (target: HTMLElement, marker: Omit<DocumentMarker, 'top' | 'left' | 'highlightTop' | 'highlightLeft' | 'highlightWidth' | 'highlightHeight'>): void => {
         const rect = target.getBoundingClientRect()
         if (rect.bottom < shellRect.top || rect.top > shellRect.bottom) return
         const slot = slots.get(target) ?? 0
         slots.set(target, slot + 1)
-        nextMarkers.push({ itemId: item.id, title: item.question.trim() || item.statement.trim(), top: rect.top - shellRect.top + Math.min(8, rect.height / 2) + slot * 25, left: Math.max(4, rect.left - shellRect.left - 30), blocking: item.severity === 'blocking' })
+        const highlightLeft = Math.max(0, rect.left - shellRect.left - 5)
+        const highlightTop = rect.top - shellRect.top - 3
+        nextMarkers.push({
+          ...marker,
+          top: rect.top - shellRect.top + Math.min(8, rect.height / 2) + slot * 25,
+          left: Math.max(4, rect.left - shellRect.left - 30),
+          highlightTop,
+          highlightLeft,
+          highlightWidth: Math.max(28, Math.min(shellRect.width - highlightLeft - 8, rect.width + 10)),
+          highlightHeight: Math.max(26, Math.min(shellRect.height - Math.max(0, highlightTop) - 4, rect.height + 6)),
+        })
+      }
+      reviewItemsRef.current.forEach(item => {
+        const selected = focus?.kind === 'review' && focus.objectId === item.id
+        const targets = reviewTargetElements(editorRoot, item, selected ? focus.sourceKey : undefined)
+        const target = targets[0]
+        if (!target) return
+        target.dataset.annotationKind = target.dataset.annotationKind === 'comment' ? 'mixed' : 'review'
+        if (selected) target.classList.add(reviewSourceClass)
+        if (selected) target.dataset.annotationSelected = 'review'
+        addMarker(target, { kind: 'review', objectId: item.id, label: item.severity === 'blocking' ? '!' : '?', title: item.question.trim() || item.statement.trim(), blocking: item.severity === 'blocking', selected })
+      })
+      commentsRef.current.forEach(comment => {
+        const selected = focus?.kind === 'comment' && focus.objectId === comment.id
+        const targets = commentTargetElements(editorRoot, comment.anchor)
+        const target = targets[0]
+        if (!target) return
+        target.dataset.annotationKind = target.dataset.annotationKind === 'review' ? 'mixed' : 'comment'
+        if (selected) target.classList.add(commentSourceClass)
+        if (selected) target.dataset.annotationSelected = 'comment'
+        addMarker(target, { kind: 'comment', objectId: comment.id, label: '评', title: comment.body.trim() || comment.anchor.quote.trim(), blocking: false, selected })
       })
       setMarkers(nextMarkers)
     }
@@ -319,14 +503,12 @@ function RichMarkdownEditor({ markdown, reviewItems, selectedReviewId, focusRequ
       const block = start?.closest<HTMLElement>(reviewBlockSelector)
       const blockText = block?.textContent ?? quote
       const quoteIndex = blockText.indexOf(quote)
-      const headings = Array.from(host.current?.querySelectorAll<HTMLElement>('.toastui-editor-contents h1, .toastui-editor-contents h2, .toastui-editor-contents h3, .toastui-editor-contents h4') ?? [])
+      const headings = Array.from(visibleEditorContents(host.current)?.querySelectorAll<HTMLElement>('h1, h2, h3, h4') ?? [])
       const anchorNode = block ?? start
       const heading = anchorNode ? headings.filter(candidate => Boolean(candidate.compareDocumentPosition(anchorNode) & Node.DOCUMENT_POSITION_FOLLOWING)).at(-1)?.textContent?.trim() : undefined
       const rect = range.getBoundingClientRect()
-      const left = Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - 390))
-      const below = rect.bottom + 9
-      const top = below + 48 < window.innerHeight ? below : Math.max(8, rect.top - 46)
-      onSelectionRef.current({ quote, prefix: quoteIndex < 0 ? '' : blockText.slice(Math.max(0, quoteIndex - 80), quoteIndex), suffix: quoteIndex < 0 ? '' : blockText.slice(quoteIndex + quote.length, quoteIndex + quote.length + 80), ...(heading ? { heading } : {}), rect: { top, left } })
+      const position = inlinePopoverPositionFromRect(rect, { width: 360, height: 230 })
+      onSelectionRef.current({ quote, prefix: quoteIndex < 0 ? '' : blockText.slice(Math.max(0, quoteIndex - 80), quoteIndex), suffix: quoteIndex < 0 ? '' : blockText.slice(quoteIndex + quote.length, quoteIndex + quote.length + 80), ...(heading ? { heading } : {}), ...position })
     }
     editor.on('change', change)
     host.current.addEventListener('beforeinput', markInteraction)
@@ -335,17 +517,23 @@ function RichMarkdownEditor({ markdown, reviewItems, selectedReviewId, focusRequ
     host.current.addEventListener('pointerdown', markInteraction)
     host.current.addEventListener('mouseup', selection)
     host.current.addEventListener('keyup', selection)
-    const scrollContainer = host.current.querySelector<HTMLElement>('.toastui-editor-ww-container')
     const scroll = (): void => { onSelectionRef.current(undefined); scheduleAnnotations() }
-    scrollContainer?.addEventListener('scroll', scroll, { passive: true })
+    const scrollTargets = new Set<HTMLElement>()
+    const bindScrollTarget = (element: HTMLElement): void => {
+      if (scrollTargets.has(element)) return
+      scrollTargets.add(element)
+      element.addEventListener('scroll', scroll, { passive: true })
+    }
+    const bindAnnotationScrollTargets = (): void => annotationScrollTargets(host.current).forEach(bindScrollTarget)
+    bindAnnotationScrollTargets()
     window.addEventListener('resize', scheduleAnnotations)
     const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(scheduleAnnotations)
     resizeObserver?.observe(shell.current)
-    const mutationObserver = new MutationObserver(scheduleAnnotations)
+    const mutationObserver = new MutationObserver(() => { bindAnnotationScrollTargets(); scheduleAnnotations() })
     mutationObserver.observe(host.current, { childList: true, subtree: true })
     instance.current = editor
     scheduleAnnotations()
-    return () => { cancelAnimationFrame(frame); mutationObserver.disconnect(); resizeObserver?.disconnect(); window.removeEventListener('resize', scheduleAnnotations); scrollContainer?.removeEventListener('scroll', scroll); host.current?.removeEventListener('beforeinput', markInteraction); host.current?.removeEventListener('paste', markInteraction); host.current?.removeEventListener('drop', markInteraction); host.current?.removeEventListener('pointerdown', markInteraction); host.current?.removeEventListener('mouseup', selection); host.current?.removeEventListener('keyup', selection); editor.destroy() }
+    return () => { cancelAnimationFrame(frame); mutationObserver.disconnect(); resizeObserver?.disconnect(); window.removeEventListener('resize', scheduleAnnotations); scrollTargets.forEach(element => element.removeEventListener('scroll', scroll)); host.current?.removeEventListener('beforeinput', markInteraction); host.current?.removeEventListener('paste', markInteraction); host.current?.removeEventListener('drop', markInteraction); host.current?.removeEventListener('pointerdown', markInteraction); host.current?.removeEventListener('mouseup', selection); host.current?.removeEventListener('keyup', selection); editor.destroy() }
   }, [])
   useEffect(() => {
     const editor = instance.current
@@ -357,14 +545,31 @@ function RichMarkdownEditor({ markdown, reviewItems, selectedReviewId, focusRequ
   }, [markdown])
   useEffect(() => {
     syncAnnotationsRef.current()
-    if (!selectedReviewId || focusRequest === 0) return
-    const editorRoot = host.current?.querySelector<HTMLElement>('.toastui-editor-contents')
-    const item = reviewItems.find(candidate => candidate.id === selectedReviewId)
-    const target = editorRoot && item ? reviewTargetElements(editorRoot, item)[0] : undefined
-    target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    window.setTimeout(() => syncAnnotationsRef.current(), 220)
-  }, [reviewItems, selectedReviewId, focusRequest])
-  return <div className={css.richEditorShell} ref={shell}><div className={css.richEditor} ref={host}/><div className={css.reviewAnchorLayer} aria-label="正文问题锚点">{markers.map(marker => <button key={marker.itemId} type="button" className={`${css.documentReviewAnchor} ${marker.blocking ? css.documentReviewAnchorBlocking : ''} ${marker.itemId === selectedReviewId ? css.documentReviewAnchorSelected : ''}`} style={{ top: marker.top, left: marker.left }} title={marker.title} aria-label={`打开问题：${marker.title}`} onMouseDown={event => event.preventDefault()} onClick={() => onOpenReviewRef.current(marker.itemId)}>?</button>)}</div></div>
+    if (!documentFocus || focusRequest === 0) return
+    const findTarget = (): HTMLElement | undefined => {
+      const editorRoot = visibleEditorContents(host.current)
+      if (!editorRoot) return undefined
+      if (documentFocus.kind === 'review') {
+        const item = reviewItems.find(candidate => candidate.id === documentFocus.objectId)
+        return item ? reviewTargetElements(editorRoot, item, documentFocus.sourceKey)[0] : undefined
+      }
+      const comment = comments.find(candidate => candidate.id === documentFocus.objectId)
+      return comment ? commentTargetElements(editorRoot, comment.anchor)[0] : undefined
+    }
+    const findReviewMarker = (): HTMLElement | undefined => Array.from(shell.current?.querySelectorAll<HTMLElement>('[data-review-object-id]') ?? []).find(element => element.dataset.reviewObjectId === documentFocus.objectId)
+    const target = findTarget()
+    target?.scrollIntoView(documentFocus.kind === 'review' ? { block: 'center' } : { behavior: 'smooth', block: 'center' })
+    const updateLocatedReview = (): void => {
+      syncAnnotationsRef.current()
+      if (documentFocus.kind !== 'review') return
+      const anchor = findReviewMarker() ?? findTarget()
+      if (anchor) onReviewLocatedRef.current(documentFocus.objectId, inlinePopoverPositionFromRect(anchor.getBoundingClientRect(), inlineReviewPopoverSize), documentFocus.sourceKey)
+    }
+    if (documentFocus.kind === 'review') window.requestAnimationFrame(() => window.requestAnimationFrame(updateLocatedReview))
+    else window.setTimeout(updateLocatedReview, 220)
+  }, [reviewItems, comments, documentFocus, focusRequest])
+  return <div className={css.richEditorShell} ref={shell}><div className={css.richEditor} ref={host}/><div className={css.reviewAnchorLayer} aria-label="正文协作锚点">{markers.map(marker => <span key={`highlight-${marker.kind}-${marker.objectId}`} className={`${css.documentAnchorHighlight} ${marker.kind === 'comment' ? css.documentCommentHighlight : css.documentReviewHighlight} ${marker.blocking ? css.documentReviewHighlightBlocking : ''} ${marker.selected ? css.documentAnchorHighlightSelected : ''}`} style={{ top: marker.highlightTop, left: marker.highlightLeft, width: marker.highlightWidth, height: marker.highlightHeight }} aria-hidden="true"/>)}
+    {markers.map(marker => <button key={`${marker.kind}-${marker.objectId}`} type="button" className={`${marker.kind === 'comment' ? css.documentCommentAnchor : css.documentReviewAnchor} ${marker.blocking ? css.documentReviewAnchorBlocking : ''} ${marker.selected ? css.documentAnchorSelected : ''}`} style={{ top: marker.top, left: marker.left }} title={marker.title} aria-label={marker.kind === 'comment' ? `打开评论：${marker.title}` : `打开问题：${marker.title}`} data-review-object-id={marker.kind === 'review' ? marker.objectId : undefined} data-comment-object-id={marker.kind === 'comment' ? marker.objectId : undefined} onMouseDown={event => event.preventDefault()} onClick={event => marker.kind === 'comment' ? onOpenCommentRef.current(marker.objectId) : onOpenReviewRef.current(marker.objectId, inlinePopoverPositionFromRect(event.currentTarget.getBoundingClientRect(), inlineReviewPopoverSize))}>{marker.label}</button>)}</div></div>
 }
 
 type Act = (factory: (actor: ParticipantSnapshot) => CollaborationAction) => Promise<boolean>
@@ -372,11 +577,11 @@ const reviewKindLabel: Record<ReviewKind, string> = { 'product-first': '需求�
 const reviewTypeLabel: Record<ReviewItemType, string> = { goal: '目标', evidence: '依据', 'history-conflict': '历史冲突', 'current-implementation': '当前实现', scope: '范围', semantics: '规则语义', completeness: '完整性', acceptance: '验收', risk: '风险' }
 const statusLabel: Record<string, string> = { queued: '排队中', running: '分析中', completed: '已完成', failed: '失败', open: '待处理', answered: '已回答待整理', 'joint-review': '待产研共议', 'non-blocking-verify': '保留待核对', resolved: '已解决', invalidated: '已失效', pending: '待确认', accepted: '已接受', rejected: '未采用', stale: '已过期', blocking: '阻塞', major: '重要', minor: '一般' }
 const evidenceStatusLabel: Record<string, string> = { FACT: '已有依据', INFERENCE: '根据现有信息推断', ASSUMPTION: '暂定规则', TO_VERIFY: '待核对' }
+const commentResolutionLabel: Record<CommentResolution, string> = { 'written-back': '已回写正文', decision: '形成决策', rejected: '不采纳', 'open-question': '转开放问题' }
 function MarkdownBody({ text, className = '' }: { text: string; className?: string | undefined }) { return <div className={`${css.markdownBody} ${className}`} dangerouslySetInnerHTML={{ __html: md.render(text) }}/> }
 type ReviewItemView = RequirementView['reviewItems'][number]
-export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest, onSelectReview, onLocateSource, onOpenRequestHandled }: { requirement: RequirementView; act: Act; api: SpecApi; focusedItemId?: string | undefined; openRequest?: ReviewOpenRequest | undefined; onSelectReview?: (itemId: string) => void; onLocateSource?: (itemId: string) => void; onOpenRequestHandled?: (requestId: number) => void }) {
+export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest, onSelectReview, onLocateSource, onOpenRequestHandled }: { requirement: RequirementView; act: Act; api: SpecApi; focusedItemId?: string | undefined; openRequest?: ReviewOpenRequest | undefined; onSelectReview?: (itemId: string) => void; onLocateSource?: (itemId: string, sourceKey?: string) => void; onOpenRequestHandled?: (requestId: number) => void }) {
   const [selectedItemId, setSelectedItemId] = useState<string>()
-  const closeSelectedItem = useCallback(() => setSelectedItemId(undefined), [])
   const current = requirement.reviewItems.filter(item => item.commit === requirement.currentCommit).slice().sort((left, right) => Number(right.severity === 'blocking') - Number(left.severity === 'blocking') || right.updatedAt - left.updatedAt)
   const historical = requirement.reviewItems.filter(item => item.commit !== requirement.currentCommit)
   const active = current.filter(item => !['resolved', 'invalidated', 'non-blocking-verify'].includes(item.status))
@@ -384,10 +589,13 @@ export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest,
   const unansweredCount = active.filter(item => item.status === 'open').length
   const answeredCount = active.filter(item => item.status === 'answered').length
   const processedCount = current.filter(item => item.status !== 'open').length
-  const selectedItem = [...current, ...historical].find(item => item.id === selectedItemId)
-  const nextAnswerable = active.find(item => item.status === 'open' && item.id !== selectedItemId)
   const currentRuns = requirement.aiRuns.filter(run => run.commit === requirement.currentCommit)
-  const openItem = (itemId: string): void => { setSelectedItemId(itemId); onSelectReview?.(itemId) }
+  const openItem = (itemId: string): void => {
+    setSelectedItemId(itemId)
+    const sourceKey = [...current, ...historical].find(item => item.id === itemId)?.sourceAnchors?.[0] ? `quote-0` : undefined
+    onSelectReview?.(itemId)
+    onLocateSource?.(itemId, sourceKey)
+  }
   useEffect(() => {
     if (!openRequest) return
     if ([...current, ...historical].some(item => item.id === openRequest.objectId)) openItem(openRequest.objectId)
@@ -400,7 +608,6 @@ export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest,
     {active.length > 0 && <ReviewChecklist items={active} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/>}
     {deferred.length > 0 && <details className={css.historyGroup}><summary>保留待核对 · {deferred.length}</summary><ReviewChecklist items={deferred} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/></details>}
     {historical.length > 0 && <details className={css.historyGroup}><summary>历史问题 · {historical.length}</summary><ReviewChecklist items={historical.slice().reverse()} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/></details>}
-    {selectedItem && <ReviewDecisionDialog key={selectedItem.id} item={selectedItem} sourceMarkdown={requirement.version?.markdown ?? ''} requirementId={requirement.id} nextItemId={nextAnswerable?.id} act={act} close={closeSelectedItem} locateSource={() => { closeSelectedItem(); onLocateSource?.(selectedItem.id) }} complete={continueToNext => { if (continueToNext && nextAnswerable) openItem(nextAnswerable.id); else closeSelectedItem() }}/>}
   </>
 }
 function ReviewChecklist({ items, selectedItemId, open }: { items: ReviewItemView[]; selectedItemId?: string | undefined; open: (itemId: string) => void }) {
@@ -426,69 +633,79 @@ const dispositionGuidance: Record<keyof typeof dispositionLabel, string> = {
   'to-verify': '这项不会继续阻塞当前阶段，但会保留在待核对清单。',
   'joint-review': '把问题留到产研共审，由产品和研发共同决定。',
 }
-function ReviewDecisionDialog({ item, sourceMarkdown, requirementId, nextItemId, act, close, locateSource, complete }: { item: ReviewItemView; sourceMarkdown: string; requirementId: string; nextItemId?: string | undefined; act: Act; close: () => void; locateSource: () => void; complete: (continueToNext: boolean) => void }) {
+export function InlineReviewComposer({ item, sourceMarkdown, requirementId, position, nextItemId, busy, act, close, locateSource, complete }: { item: ReviewItemView; sourceMarkdown: string; requirementId: string; position: InlinePopoverPosition; nextItemId?: string | undefined; busy: boolean; act: Act; close: () => void; locateSource: (sourceKey?: string) => void; complete: (continueToNext: boolean) => void }) {
   const [disposition, setDisposition] = useState<keyof typeof dispositionLabel>('context')
   const [body, setBody] = useState('')
-  const dialogRef = useRef<HTMLElement>(null)
-  const returnFocusRef = useRef<HTMLElement | null>(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  const formRef = useRef<HTMLFormElement>(null)
   const recommendations = item.recommendedOptions?.map(option => option.trim()).filter(Boolean).slice(0, 5) ?? []
   const sourceSnippets = reviewSourceSnippets(sourceMarkdown, item)
+  const primarySource = sourceSnippets[0]
   const canRespond = !item.response && item.status === 'open'
   useEffect(() => {
-    const dialog = dialogRef.current
-    const focusableSelector = 'button:not(:disabled), select:not(:disabled), textarea:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
-    const focusable = (): HTMLElement[] => dialog ? Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)) : []
-    if (dialog && !dialog.contains(document.activeElement)) (dialog.querySelector<HTMLElement>('textarea') ?? focusable()[0])?.focus()
     const keydown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') { event.preventDefault(); close(); return }
-      if (event.key !== 'Tab') return
-      const controls = focusable()
-      if (controls.length === 0) { event.preventDefault(); return }
-      const first = controls[0]!
-      const last = controls[controls.length - 1]!
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
     }
     window.addEventListener('keydown', keydown)
-    return () => { window.removeEventListener('keydown', keydown); returnFocusRef.current?.focus() }
+    window.setTimeout(() => formRef.current?.querySelector<HTMLElement>('textarea')?.focus(), 0)
+    return () => window.removeEventListener('keydown', keydown)
   }, [close])
   const choose = (option: string): void => { setBody(option); setDisposition('accept-modified') }
   const submit = async (continueToNext: boolean): Promise<void> => { const answer = body.trim() || (disposition === 'joint-review' ? '转产研共同决策' : ''); if (answer && await act(actor => ({ kind: 'review.respond', participant: actor, requirementId, reviewItemId: item.id, disposition, body: answer }))) complete(continueToNext) }
-  const canSubmit = Boolean(body.trim()) || disposition === 'joint-review'
-  return <div className={`${css.modal} ${css.reviewDecisionModal}`} onMouseDown={event => { if (event.currentTarget === event.target) close() }}>
-    <section ref={dialogRef} className={css.reviewDecisionDialog} role="dialog" aria-modal="true" aria-labelledby={`review-dialog-${item.id}`}>
-      <header className={css.reviewDecisionHeader}><div><div className={css.decisionTags}><b>{statusLabel[item.severity] ?? item.severity}</b><span>{reviewTypeLabel[item.type]}</span><span>{evidenceStatusLabel[item.epistemicStatus] ?? item.epistemicStatus}</span></div><h2 id={`review-dialog-${item.id}`}>{item.statement}</h2></div><button aria-label="关闭问题窗口" title="关闭" onClick={close}>×</button></header>
-      <div className={css.reviewDecisionBody}>
-        <main className={css.reviewDecisionContext}>
-          <section className={css.decisionQuestion}><span>待澄清问题</span><MarkdownBody text={item.question}/></section>
-          {sourceSnippets.length > 0 && <section className={css.decisionSection}><div className={css.decisionSectionHead}><h3>关联正文</h3><button onClick={locateSource}>在正文中查看</button></div><div className={css.decisionSourceList}>{sourceSnippets.map(snippet => <div className={css.decisionSource} key={snippet.key}><span>{snippet.label}{snippet.line ? ` · 第 ${snippet.line} 行` : ''}</span><MarkdownBody text={snippet.markdown}/></div>)}</div></section>}
-          <section className={css.decisionSection}><h3>为什么需要明确</h3><MarkdownBody text={item.impact}/></section>
-          <section className={css.decisionSection}><div className={css.decisionSectionHead}><h3>依据与来源</h3><span>{item.evidence.length} 条</span></div>{item.evidence.length === 0 ? <p className={css.decisionEmpty}>当前没有可核对的资料，可以按业务判断回答，或选择保留待核对。</p> : <div className={css.decisionEvidenceList}>{item.evidence.map((evidence, index) => <div className={css.decisionEvidence} key={`${evidence.source}-${index}`}><code>{evidence.source}{evidence.version ? `@${evidence.version}` : ''}</code><MarkdownBody text={evidence.statement}/></div>)}</div>}</section>
-          {(item.affectedSections.length > 0 || item.affectedAcceptanceIds.length > 0) && <section className={css.decisionSection}><h3>可能影响</h3><p>{[...item.affectedSections, ...item.affectedAcceptanceIds].join(' · ')}</p></section>}
-        </main>
-        <aside className={css.reviewDecisionAside} aria-label="处理这个问题">
-          {item.response ? <div className={css.decisionResponse}><span>已回复</span><strong>{item.response.participant.nickname}</strong><small>{dispositionLabel[item.response.disposition]}</small><MarkdownBody text={item.response.body}/></div> : canRespond ? <>
-            <div className={css.decisionAsideHead}><span>你的回答</span><strong>先选处理结果，再写下最终结论</strong></div>
-            {recommendations.length > 0 && <fieldset className={css.decisionOptions}><legend>可直接采用的回答</legend>{recommendations.map((option, index) => <button key={option} className={body === option ? css.selectedDecisionOption : ''} aria-pressed={body === option} onClick={() => choose(option)}><span>{option}</span><b>{body === option ? '已选择' : String(index + 1).padStart(2, '0')}</b></button>)}</fieldset>}
-            <div className={css.decisionForm}><label>保存后如何处理<select required value={disposition} onChange={event => setDisposition(event.target.value as keyof typeof dispositionLabel)}>{Object.entries(dispositionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><p className={css.decisionModeHint}>{dispositionGuidance[disposition]}</p><label>最终结论<textarea required autoFocus value={body} onChange={event => setBody(event.target.value)} placeholder={disposition === 'evidence' ? '粘贴数据、案例或来源链接，并说明它支持什么结论' : disposition === 'joint-review' ? '可选：补充希望产品和研发重点讨论的边界' : '写清最终判断、适用范围、例外情况和取舍理由'}/></label></div>
-            <div className={css.decisionActions}><button onClick={close}>取消</button><div>{nextItemId && <button disabled={!canSubmit} onClick={() => void submit(false)}>保存并返回清单</button>}<button className={css.execute} disabled={!canSubmit} onClick={() => void submit(Boolean(nextItemId))}>{nextItemId ? '保存并回答下一题' : '保存最后一项回答'}</button></div></div>
-          </> : <div className={css.decisionResponse}><span>{statusLabel[item.status] ?? item.status}</span><strong>这条记录当前不可回复</strong><p>你仍可以查看完整问题、影响和来源。</p></div>}
-        </aside>
-      </div>
-    </section>
-  </div>
+  const canSubmit = !busy && (Boolean(body.trim()) || disposition === 'joint-review')
+  return <form ref={formRef} className={`${css.inlineReviewPrompt} ${position.placement === 'above' ? css.selectionPromptAbove : css.selectionPromptBelow}`} role="dialog" aria-label="回答待处理问题" style={{ top: position.rect.top, left: position.rect.left, maxHeight: position.maxHeight }} onSubmit={event => { event.preventDefault(); if (canSubmit) void submit(Boolean(nextItemId)) }} onKeyDown={event => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSubmit) { event.preventDefault(); void submit(Boolean(nextItemId)) }
+  }}>
+    <header className={css.inlineReviewHead}>
+      <div><div className={css.decisionTags}><b>{statusLabel[item.severity] ?? item.severity}</b><span>{reviewTypeLabel[item.type]}</span><span>{evidenceStatusLabel[item.epistemicStatus] ?? item.epistemicStatus}</span></div><strong>{item.statement}</strong></div>
+      <button type="button" aria-label="关闭问题窗口" title="关闭" onClick={close}>×</button>
+    </header>
+    <section className={css.inlineReviewQuestion}><span>待回答</span><MarkdownBody text={item.question}/></section>
+    {primarySource && <button type="button" className={css.inlineReviewSource} onClick={() => locateSource(primarySource.targetKey)}><span>{primarySource.label}{primarySource.line ? ` · 第 ${primarySource.line} 行` : ''}</span><q>{primarySource.markdown.replace(/\s+/g, ' ').slice(0, 96)}{primarySource.markdown.length > 96 ? '…' : ''}</q></button>}
+    {item.response ? <div className={css.decisionResponse}><span>已回复</span><strong>{item.response.participant.nickname}</strong><small>{dispositionLabel[item.response.disposition]}</small><MarkdownBody text={item.response.body}/></div> : canRespond ? <>
+      {recommendations.length > 0 && <fieldset className={`${css.decisionOptions} ${css.inlineDecisionOptions}`}><legend>可采用的回答</legend>{recommendations.map((option, index) => <button type="button" key={option} className={body === option ? css.selectedDecisionOption : ''} aria-pressed={body === option} onClick={() => choose(option)}><span>{option}</span><b>{body === option ? '已选择' : String(index + 1).padStart(2, '0')}</b></button>)}</fieldset>}
+      <div className={`${css.decisionForm} ${css.inlineDecisionForm}`}><label>保存后如何处理<select required value={disposition} onChange={event => setDisposition(event.target.value as keyof typeof dispositionLabel)}>{Object.entries(dispositionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><p className={css.decisionModeHint}>{dispositionGuidance[disposition]}</p><label>最终结论<textarea required value={body} onChange={event => setBody(event.target.value)} placeholder={disposition === 'evidence' ? '粘贴数据、案例或来源链接，并说明它支持什么结论' : disposition === 'joint-review' ? '可选：补充希望产品和研发重点讨论的边界' : '写清最终判断、适用范围、例外情况和取舍理由'}/></label></div>
+      <details className={css.inlineReviewDetails}><summary>影响与依据</summary><section><h3>为什么需要明确</h3><MarkdownBody text={item.impact}/></section><section><h3>依据与来源 · {item.evidence.length}</h3>{item.evidence.length === 0 ? <p className={css.decisionEmpty}>当前没有可核对的资料，可以按业务判断回答，或选择保留待核对。</p> : <div className={css.decisionEvidenceList}>{item.evidence.map((evidence, index) => <div className={css.decisionEvidence} key={`${evidence.source}-${index}`}><code>{evidence.source}{evidence.version ? `@${evidence.version}` : ''}</code><MarkdownBody text={evidence.statement}/></div>)}</div>}</section>{(item.affectedSections.length > 0 || item.affectedAcceptanceIds.length > 0) && <section><h3>可能影响</h3><p>{[...item.affectedSections, ...item.affectedAcceptanceIds].join(' · ')}</p></section>}</details>
+      <div className={css.inlineReviewActions}><button type="button" onClick={close}>取消</button><div>{nextItemId && <button type="button" disabled={!canSubmit} onClick={() => void submit(false)}>保存并留在此处</button>}<button type="submit" className={css.execute} disabled={!canSubmit}>{busy ? '保存中' : nextItemId ? '保存并下一题' : '保存回答'}</button></div></div>
+    </> : <div className={css.decisionResponse}><span>{statusLabel[item.status] ?? item.status}</span><strong>这条记录当前不可回复</strong><p>你仍可以查看完整问题、影响和来源。</p></div>}
+  </form>
 }
-function DiscussionPanel({ requirement, selection, text, setText, cancel, submit, act, api }: { requirement: RequirementView; selection: { quote: string } | undefined; text: string; setText: (value: string) => void; cancel: () => void; submit: () => Promise<void>; participant: ParticipantSnapshot; act: Act; api: SpecApi }) {
-  return <>
-    {selection && <section className={css.newThread}>
-      <header><span>正文讨论</span><strong>围绕选中内容提问</strong></header>
-      <blockquote>{selection.quote}</blockquote>
-      <label>你想确认什么？<textarea required autoFocus value={text} onChange={event => setText(event.target.value)} placeholder="例如：这里的适用范围是否包含移动端？"/></label>
-      <small>提交后，AI 会结合当前正文和已关联的工作区上下文给出分析。</small>
-      <div><button onClick={cancel}>取消</button><button className={css.execute} disabled={!text.trim()} onClick={() => void submit()}>提交并让 AI 分析</button></div>
-    </section>}
-    {requirement.comments.slice().reverse().map(comment => <section id={`spec-object-${comment.id}`} key={comment.id}><blockquote>{comment.anchor.quote}</blockquote><strong>{comment.author.nickname}</strong><MarkdownBody text={comment.body}/><small>智能分析：{comment.aiStatus}{comment.aiSessionId ? ` · ${comment.aiSessionId.slice(0, 8)}` : ''}</small>{comment.aiSessionId && <AiConversation api={api} requirementId={requirement.id} sessionId={comment.aiSessionId}/>} {comment.replies.map(reply => <div className={css.reply} key={reply.id}><strong>{reply.author.nickname}{reply.author.kind === 'ai' ? ' · 智能助手' : ''}</strong><MarkdownBody text={reply.body}/></div>)}{comment.status === 'open' && <div>{(['written-back', 'decision', 'rejected', 'open-question'] as CommentResolution[]).map(resolution => <button key={resolution} onClick={() => void act(actor => ({ kind: 'comment.resolve', participant: actor, requirementId: requirement.id, commentId: comment.id, resolution }))}>{({ 'written-back': '已回写正文', decision: '形成决策', rejected: '不采纳', 'open-question': '转为开放问题' })[resolution]}</button>)}</div>}</section>)}
-  </>
+export function DiscussionPanel({ requirement, focusedCommentId, onSelectComment, onLocateComment, act, api }: { requirement: RequirementView; selection?: { quote: string } | undefined; text?: string; setText?: (value: string) => void; cancel?: () => void; submit?: () => Promise<void>; focusedCommentId?: string | undefined; onSelectComment?: (commentId: string) => void; onLocateComment?: (commentId: string) => void; act: Act; api: SpecApi }) {
+  const locateComment = (commentId: string): void => {
+    onSelectComment?.(commentId)
+    onLocateComment?.(commentId)
+  }
+  const comments = requirement.comments.slice().sort((left, right) => Number(right.status === 'open') - Number(left.status === 'open') || right.updatedAt - left.updatedAt)
+  const currentComments = comments.filter(comment => comment.commit === requirement.currentCommit)
+  const openComments = currentComments.filter(comment => comment.status === 'open')
+  const closedComments = currentComments.filter(comment => comment.status !== 'open')
+  const historicalComments = comments.filter(comment => comment.commit !== requirement.currentCommit)
+  const renderThread = (comment: CommentThread) => {
+    const selected = focusedCommentId === comment.id
+    const currentVersion = comment.commit === requirement.currentCommit
+    const resolvedText = comment.resolution ? commentResolutionLabel[comment.resolution] : undefined
+    return <section id={`spec-object-${comment.id}`} className={`${css.commentThread} ${selected ? css.commentThreadSelected : ''} ${comment.status !== 'open' ? css.commentThreadClosed : ''}`} key={comment.id} aria-current={selected ? 'true' : undefined}>
+      <header className={css.commentThreadHead}>
+        <div className={css.commentGlyph} aria-hidden="true">评</div>
+        <div className={css.commentThreadMeta}>
+          <strong>{comment.author.nickname}</strong>
+          <div className={css.threadPills}><span>{currentVersion ? '当前正文' : '历史正文'}</span><span>{statusLabel[comment.status] ?? comment.status}</span><span>AI {statusLabel[comment.aiStatus] ?? comment.aiStatus}</span>{resolvedText && <span>{resolvedText}</span>}</div>
+        </div>
+        <button type="button" className={css.locateSourceButton} onClick={() => locateComment(comment.id)}>定位正文</button>
+      </header>
+      <button type="button" className={css.commentSourceButton} onClick={() => locateComment(comment.id)}><span>{comment.anchor.heading?.trim() || '原文片段'}</span><q>{comment.anchor.quote}</q></button>
+      <MarkdownBody text={comment.body} className={css.commentBody}/>
+      {comment.aiSessionId && <AiConversation api={api} requirementId={requirement.id} sessionId={comment.aiSessionId}/>}
+      {comment.replies.length > 0 && <div className={css.replyStack}>{comment.replies.map(reply => <div className={css.reply} key={reply.id}><strong>{reply.author.nickname}{reply.author.kind === 'ai' ? ' · 智能助手' : ''}</strong><MarkdownBody text={reply.body}/></div>)}</div>}
+      {comment.status === 'open' && <div className={css.commentActions}>{(['written-back', 'decision', 'rejected', 'open-question'] as CommentResolution[]).map(resolution => <button key={resolution} onClick={() => void act(actor => ({ kind: 'comment.resolve', participant: actor, requirementId: requirement.id, commentId: comment.id, resolution }))}>{commentResolutionLabel[resolution]}</button>)}</div>}
+    </section>
+  }
+  return <div className={css.discussionPanel}>
+    <div className={css.discussionSummary}><div><strong>正文讨论</strong><span>{openComments.length > 0 ? `${openComments.length} 个当前正文问题待收口` : '当前正文没有待处理讨论'}</span></div><b>{comments.length}</b></div>
+    {openComments.length === 0 && <div className={css.emptyPanel}><strong>没有打开的正文讨论</strong><p>在正文中选中片段，会就地出现讨论气泡。</p></div>}
+    {openComments.map(renderThread)}
+    {closedComments.length > 0 && <details className={css.historyGroup}><summary>当前正文已处理 · {closedComments.length}</summary><div className={css.threadStack}>{closedComments.map(renderThread)}</div></details>}
+    {historicalComments.length > 0 && <details className={css.historyGroup}><summary>历史正文讨论 · {historicalComments.length}</summary><div className={css.threadStack}>{historicalComments.map(renderThread)}</div></details>}
+  </div>
 }
 function AiConversation({ api, requirementId, sessionId }: { api: SpecApi; requirementId: string; sessionId: string }) {
   const [open, setOpen] = useState(false)
@@ -521,9 +738,11 @@ function PatchPanel({ requirement, act }: { requirement: RequirementView; act: A
 }
 function DecisionPanel({ requirement, act }: { requirement: RequirementView; act: Act }) {
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ question: '', decision: '', rationale: '' })
-  const submit = async (): Promise<void> => { if (await act(actor => ({ kind: 'decision.create', participant: actor, requirementId: requirement.id, question: form.question, options: [], decision: form.decision, rationale: form.rationale, affectedSections: [], affectedAcceptanceIds: [] }))) { setOpen(false); setForm({ question: '', decision: '', rationale: '' }) } }
-  return <>{requirement.decisions.map(item => <section id={`spec-object-${item.id}`} key={item.id}><MarkdownBody text={item.question} className={css.reviewTitle}/><MarkdownBody text={item.decision}/><small>{item.rationale} · {item.confirmer.nickname}</small></section>)}{open ? <div className={css.decisionForm}><label>待决策问题（必填）<textarea required autoFocus value={form.question} onChange={event => setForm({ ...form, question: event.target.value })}/></label><label>确认结论（必填）<textarea required value={form.decision} onChange={event => setForm({ ...form, decision: event.target.value })}/></label><label>决策理由（选填）<textarea value={form.rationale} onChange={event => setForm({ ...form, rationale: event.target.value })}/></label><div className={css.cardActions}><button onClick={() => setOpen(false)}>取消</button><button className={css.execute} disabled={!form.question.trim() || !form.decision.trim()} onClick={() => void submit()}>保存决策</button></div></div> : <button className={css.panelAction} onClick={() => setOpen(true)}>记录新决策</button>}</>
+  const [form, setForm] = useState({ question: '', decision: '', rationale: '', sections: '', acceptanceIds: '' })
+  const affectedSections = form.sections.split(',').map(value => value.trim()).filter(Boolean)
+  const affectedAcceptanceIds = form.acceptanceIds.split(',').map(value => value.trim()).filter(Boolean)
+  const submit = async (): Promise<void> => { if (await act(actor => ({ kind: 'decision.create', participant: actor, requirementId: requirement.id, question: form.question, options: [], decision: form.decision, rationale: form.rationale, affectedSections, affectedAcceptanceIds }))) { setOpen(false); setForm({ question: '', decision: '', rationale: '', sections: '', acceptanceIds: '' }) } }
+  return <>{requirement.decisions.map(item => <section id={`spec-object-${item.id}`} key={item.id}><MarkdownBody text={item.question} className={css.reviewTitle}/><MarkdownBody text={item.decision}/><small>{item.rationale} · {item.confirmer.nickname} · {item.status === 'active' ? '生效中' : '已作废'}</small></section>)}{open ? <div className={css.decisionForm}><label>待决策问题（必填）<textarea required autoFocus value={form.question} onChange={event => setForm({ ...form, question: event.target.value })}/></label><label>确认结论（必填）<textarea required value={form.decision} onChange={event => setForm({ ...form, decision: event.target.value })}/></label><label>决策理由（选填）<textarea value={form.rationale} onChange={event => setForm({ ...form, rationale: event.target.value })}/></label><label>受影响章节（与 AC 至少填写一项，逗号分隔）<input value={form.sections} onChange={event => setForm({ ...form, sections: event.target.value })} placeholder="业务术语与规则"/></label><label>受影响 AC IDs（与章节至少填写一项，逗号分隔）<input value={form.acceptanceIds} onChange={event => setForm({ ...form, acceptanceIds: event.target.value })} placeholder="AC-RETRY-001"/></label><div className={css.cardActions}><button onClick={() => setOpen(false)}>取消</button><button className={css.execute} disabled={!form.question.trim() || !form.decision.trim() || (affectedSections.length === 0 && affectedAcceptanceIds.length === 0)} onClick={() => void submit()}>保存决策</button></div></div> : <button className={css.panelAction} onClick={() => setOpen(true)}>记录新决策</button>}</>
 }
 function VersionPanel({ requirement, api }: { requirement: RequirementView; api: SpecApi }) {
   const [historical, setHistorical] = useState<RequirementVersion>()

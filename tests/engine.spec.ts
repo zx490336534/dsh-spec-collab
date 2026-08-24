@@ -165,6 +165,19 @@ describe('CollaborationEngine', () => {
     expect(confirmations.find(item => item.scope === 'acceptance-criterion')?.status).toBe('invalidated')
   })
 
+  it('invalidates decisions when their original source anchor disappears after a save', () => {
+    const engine = setup(); const view = create(engine)
+    const decided = engine.apply('anchor-decision', {
+      kind: 'decision.create', participant: product, requirementId: view.id, question: '重试需求是否保留？', options: [], decision: '保留自动重试方向。', rationale: '原始需求明确提到自动重试。',
+      affectedSections: [], affectedAcceptanceIds: [], sourceAnchors: [{ heading: '原始需求与来源', quote: '支付失败后需要自动重试。' }],
+    })
+    if (!decided.ok) throw new Error(decided.error)
+    const saved = engine.apply('remove-anchor', { kind: 'version.save', participant: product, requirementId: view.id, baseCommit: view.currentCommit, markdown: view.version.markdown.replace('支付失败后需要自动重试。', '支付失败后展示明确错误。'), summary: '移除自动重试描述' })
+    if (!saved.ok) throw new Error(saved.error)
+
+    expect(saved.requirement.decisions[0]).toMatchObject({ status: 'invalidated' })
+  })
+
   it('returns a three-way conflict without losing the stale browser draft', () => {
     const engine = setup(); const view = create(engine)
     const first = engine.apply('first-save', { kind: 'version.save', participant: product, requirementId: view.id, baseCommit: view.currentCommit, markdown: `${view.version.markdown}\n远端修改`, summary: '远端修改' })

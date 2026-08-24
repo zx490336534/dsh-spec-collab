@@ -41,7 +41,7 @@ export interface CandidatePatch {
 }
 export interface Decision {
   id: string; requirementId: string; commit: string; question: string; options: string[]; decision: string; rationale: string
-  confirmer: ParticipantSnapshot; affectedSections: string[]; affectedAcceptanceIds: string[]; createdAt: number; status: 'active' | 'invalidated'
+  confirmer: ParticipantSnapshot; affectedSections: string[]; affectedAcceptanceIds: string[]; sourceAnchors?: Array<CommentThread['anchor']>; createdAt: number; status: 'active' | 'invalidated'
 }
 export interface Confirmation { id: string; requirementId: string; commit: string; role: ParticipantRole; participant: ParticipantSnapshot; scope: ConfirmationScope; scopeId?: string; status: 'active' | 'invalidated'; createdAt: number }
 export interface ActionItem {
@@ -83,7 +83,7 @@ export type CollaborationAction =
   | { kind: 'comment.resolve'; participant: ParticipantSnapshot; requirementId: string; commentId: string; resolution: CommentResolution }
   | { kind: 'patch.accept'; participant: ParticipantSnapshot; requirementId: string; patchId: string; summary: string }
   | { kind: 'patch.reject'; participant: ParticipantSnapshot; requirementId: string; patchId: string }
-  | { kind: 'decision.create'; participant: ParticipantSnapshot; requirementId: string; question: string; options: string[]; decision: string; rationale: string; affectedSections: string[]; affectedAcceptanceIds: string[] }
+  | { kind: 'decision.create'; participant: ParticipantSnapshot; requirementId: string; question: string; options: string[]; decision: string; rationale: string; affectedSections: string[]; affectedAcceptanceIds: string[]; sourceAnchors?: Array<CommentThread['anchor']> }
   | { kind: 'confirmation.create'; participant: ParticipantSnapshot; requirementId: string; role: ParticipantRole; scope: ConfirmationScope; scopeId?: string }
   | { kind: 'stage.advance'; participant: ParticipantSnapshot; requirementId: string }
   | { kind: 'ready.generate'; participant: ParticipantSnapshot; requirementId: string }
