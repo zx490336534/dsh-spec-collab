@@ -16,6 +16,7 @@ export default defineConfig([
   {
     entry: { client: 'src/client/index.ts' }, outDir: 'lib', format: ['cjs'], platform: 'browser',
     target: 'es2022', dts: false, sourcemap: false, clean: false, fixedExtension: false,
+    define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     deps: {
       neverBundle: (specifier: string) => ['react', 'react/jsx-runtime', 'react-dom/client'].includes(specifier),
       alwaysBundle: (specifier: string) => !['react', 'react/jsx-runtime', 'react-dom/client'].includes(specifier),

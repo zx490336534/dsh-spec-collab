@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
@@ -10,17 +10,65 @@ const product: ParticipantSnapshot = { participantId: 'participant-product', nic
 const engineering: ParticipantSnapshot = { participantId: 'participant-engineer', nickname: '研发乙', role: 'engineering', kind: 'human' }
 const ai: ParticipantSnapshot = { participantId: 'ai:session-review', nickname: '产品 AI', role: 'product', kind: 'ai', sessionId: 'session-review' }
 const workspaceId = 'workspace-default'
-const coordinator: AiCoordinator = { async requestReview() { return 'session-review' }, async requestCommentReply() { return 'session-comment' } }
+const coordinator: AiCoordinator = {
+  async requestReview(input) { return input.sessionId ?? 'session-review' },
+  async requestCommentReply(input) { return input.sessionId ?? 'session-comment' },
+}
 function setup() { const dir = mkdtempSync(join(tmpdir(), 'spec-engine-')); const engine = new CollaborationEngine(join(dir, 'events.json'), new GitRequirementStore(join(dir, 'repo'))); engine.setCoordinator(coordinator); return engine }
 function create(engine: CollaborationEngine): RequirementView { const result = engine.apply('create', { kind: 'requirement.create', participant: product, title: '重试策略', rawRequirement: '支付失败后需要自动重试。', sources: [], workspaceId }); if (!result.ok) throw new Error(result.error); return result.requirement }
 function readyMarkdown(view: RequirementView): string { return view.version.markdown.replace('<!-- AI 初审后补充 -->', '为支付用户降低瞬时网络失败率，重试成功或明确失败可观察。').replace('### 范围\n\n### 非范围', '支付提交入口、网络超时状态。\n\n### 非范围\n\n不修改支付渠道选择。').replace('## 业务术语与规则\n', '## 业务术语与规则\n\n瞬时失败指网关超时；最多重试两次。\n').replace('- **AC-1**：待澄清', '- **AC-RETRY-001**：给定网关超时，首次失败后最多重试两次并返回最终状态。').replace('## 测试约束\n', '## 测试约束\n\n使用可控制超时次数的网关 fixture，不连接生产支付渠道。\n') }
 
 describe('CollaborationEngine', () => {
+  it('migrates a v2 ledger into a separate v3 file and keeps a backup', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spec-engine-'))
+    const legacyPath = join(dir, 'collaboration-v2.json')
+    const eventPath = join(dir, 'collaboration-v3.json')
+    writeFileSync(legacyPath, JSON.stringify({ schemaVersion: 2, revision: 3, requirements: [], participants: [product] }))
+
+    const engine = new CollaborationEngine(eventPath, new GitRequirementStore(join(dir, 'repo')), { legacyPath })
+
+    expect(engine.snapshot()).toMatchObject({ schemaVersion: 3, revision: 3, participants: [product], customers: [], insights: [], insightLinks: [], notifications: [] })
+    expect(existsSync(legacyPath)).toBe(true)
+    expect(readdirSync(dir).some(name => name.startsWith('collaboration-v2.backup-') && name.endsWith('.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(eventPath, 'utf8'))).toMatchObject({ schemaVersion: 3 })
+  })
+
+  it('blocks startup for an unknown collaboration schema instead of resetting data', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spec-engine-'))
+    const eventPath = join(dir, 'collaboration-v3.json')
+    writeFileSync(eventPath, JSON.stringify({ schemaVersion: 99, requirements: [{ important: true }] }))
+    expect(() => new CollaborationEngine(eventPath, new GitRequirementStore(join(dir, 'repo'))).snapshot()).toThrow('unsupported collaboration schema')
+    expect(readFileSync(eventPath, 'utf8')).toContain('"important":true')
+  })
+
+  it('blocks a corrupted v2 migration without creating or overwriting v3 data', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spec-engine-'))
+    const legacyPath = join(dir, 'collaboration-v2.json')
+    const eventPath = join(dir, 'collaboration-v3.json')
+    writeFileSync(legacyPath, '{"schemaVersion":2,"requirements":[')
+
+    expect(() => new CollaborationEngine(eventPath, new GitRequirementStore(join(dir, 'repo')), { legacyPath })).toThrow('collaboration ledger is corrupted')
+    expect(readFileSync(legacyPath, 'utf8')).toBe('{"schemaVersion":2,"requirements":[')
+    expect(existsSync(eventPath)).toBe(false)
+  })
+
   it('loads collaboration state written before participant bindings existed', () => {
     const dir = mkdtempSync(join(tmpdir(), 'spec-engine-'))
     const eventPath = join(dir, 'events.json')
     writeFileSync(eventPath, JSON.stringify({ schemaVersion: 2, revision: 1, requirements: [] }))
     expect(new CollaborationEngine(eventPath, new GitRequirementStore(join(dir, 'repo'))).snapshot().participants).toEqual([])
+  })
+
+  it('backfills the current stage conversation from the latest legacy AI session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spec-engine-')); const eventPath = join(dir, 'events.json'); const store = new GitRequirementStore(join(dir, 'repo'))
+    const engine = new CollaborationEngine(eventPath, store); engine.setCoordinator(coordinator); const created = create(engine); await Promise.resolve()
+    const persisted = JSON.parse(readFileSync(eventPath, 'utf8')) as { requirements: Array<{ aiConversations?: unknown[] }> }
+    delete persisted.requirements[0]?.aiConversations; writeFileSync(eventPath, JSON.stringify(persisted))
+
+    const reloaded = new CollaborationEngine(eventPath, store)
+    expect(reloaded.view(created.id).aiConversations).toEqual([
+      expect.objectContaining({ stage: 'product-review', stageCycle: 0, sessionId: 'session-review' }),
+    ])
   })
 
   it('requires and persists a review workspace for new requirements', () => {
@@ -47,6 +95,22 @@ describe('CollaborationEngine', () => {
     const bound = reloaded.apply('bind-legacy', { kind: 'requirement.bind-workspace', participant: product, requirementId: created.requirement.id, workspaceId: 'workspace-current' })
     expect(bound.ok && bound.requirement.workspaceId).toBe('workspace-current')
     expect(reloaded.apply('rebind-legacy', { kind: 'requirement.bind-workspace', participant: product, requirementId: created.requirement.id, workspaceId: 'workspace-other' })).toMatchObject({ ok: false, error: 'review workspace is already bound' })
+  })
+
+  it('publishes semantic SSE events for comments, mentions, assignments and metrics', () => {
+    const engine = setup()
+    const events: Array<{ types: string[]; revision: number; requirementId?: string }> = []
+    engine.subscribe(event => events.push(event))
+    const view = create(engine)
+    engine.apply('register-engineer-for-events', { kind: 'participant.register', participant: engineering, requirementId: view.id })
+    const commented = engine.apply('comment-event', { kind: 'comment.create', participant: engineering, requirementId: view.id, commit: view.currentCommit, scope: 'page', body: '请产品确认', mentions: [product.participantId] })
+    if (!commented.ok) throw new Error(commented.error)
+    const comment = commented.requirement.comments.at(-1)!
+    const task = commented.requirement.actionItems.find(item => item.sourceId === comment.id)!
+    engine.apply('assignment-event', { kind: 'action.assign', participant: product, requirementId: view.id, actionItemId: task.id, assigneeRole: 'engineering', assigneeParticipantId: engineering.participantId })
+
+    expect(events.some(event => event.requirementId === view.id && event.types.includes('comment.changed') && event.types.includes('mention.created') && event.types.includes('notification.changed') && event.types.includes('metrics.changed'))).toBe(true)
+    expect(events.some(event => event.requirementId === view.id && event.types.includes('assignment.changed') && event.types.includes('notification.changed'))).toBe(true)
   })
 
   it('renames, archives, restores, and deletes a requirement', () => {
@@ -88,12 +152,72 @@ describe('CollaborationEngine', () => {
 
   it('automatically launches AI analysis for every substantive comment', async () => {
     const engine = setup(); const view = create(engine)
+    await Promise.resolve()
     const result = engine.apply('comment', { kind: 'comment.create', participant: engineering, requirementId: view.id, commit: view.currentCommit, anchor: { quote: '自动重试', heading: '原始需求与来源' }, body: '当前实现并没有区分瞬时失败。' })
     expect(result.ok).toBe(true)
     await Promise.resolve()
     const comment = engine.view(view.id).comments[0]!
     expect(comment.aiStatus).toBe('running')
-    expect(comment.aiSessionId).toBe('session-comment')
+    expect(comment.aiSessionId).toBe('session-review')
+    expect(engine.view(view.id).aiConversations).toEqual([
+      expect.objectContaining({ stage: 'product-review', stageCycle: 0, sessionId: 'session-review' }),
+    ])
+  })
+
+  it('creates page comments without a fake text anchor and notifies mentioned participants', async () => {
+    const engine = setup(); const view = create(engine)
+    const result = engine.apply('page-comment', { kind: 'comment.create', participant: engineering, requirementId: view.id, commit: view.currentCommit, scope: 'page', body: '整篇需求还缺少降级策略。', mentions: [product.participantId] })
+    expect(result.ok).toBe(true)
+    await Promise.resolve()
+    expect(engine.view(view.id).comments[0]).toMatchObject({ scope: 'page', mentions: [product.participantId] })
+    expect(engine.view(view.id).comments[0]?.anchor).toBeUndefined()
+    expect(engine.notifications(product.participantId).items[0]).toMatchObject({ recipientParticipantId: product.participantId, kind: 'mention', requirementId: view.id })
+  })
+
+  it('scores reusable customer insights once per customer for each linked requirement', () => {
+    const engine = setup(); const first = create(engine)
+    const secondResult = engine.apply('create-second', { kind: 'requirement.create', participant: product, title: '退款时效', rawRequirement: '用户需要看到退款到账时间。', sources: [], workspaceId })
+    if (!secondResult.ok) throw new Error(secondResult.error)
+    const second = secondResult.requirement
+    expect(engine.apply('company', { kind: 'company.upsert', participant: product, requirementId: first.id, company: { id: 'company-acme', name: '示例公司', externalRef: 'ACME' } }).ok).toBe(true)
+    expect(engine.apply('customer', { kind: 'customer.upsert', participant: product, requirementId: first.id, customer: { id: 'customer-one', displayName: '客户甲', companyId: 'company-acme', externalRef: 'C-1' } }).ok).toBe(true)
+    expect(engine.apply('source', { kind: 'source.upsert', participant: product, requirementId: first.id, source: { id: 'source-call', kind: 'text', label: '客户访谈', accessStatus: 'available' } }).ok).toBe(true)
+    expect(engine.apply('insight', { kind: 'insight.create', participant: product, requirementId: first.id, insight: { id: 'insight-one', sourceId: 'source-call', customerId: 'customer-one', title: '支付失败', body: '支付失败后不知道是否应该重试。', importance: 'critical', capturedAt: 1 }, links: [{ requirementId: second.id, targetType: 'requirement' }, { requirementId: first.id, targetType: 'acceptance-criterion', targetId: 'AC-1' }] }).ok).toBe(true)
+    expect(engine.apply('insight-two', { kind: 'insight.create', participant: product, requirementId: first.id, insight: { id: 'insight-two', sourceId: 'source-call', customerId: 'customer-one', title: '失败提示', body: '失败提示需要解释下一步操作。', importance: 'important', capturedAt: 2 } }).ok).toBe(true)
+
+    expect(engine.view(first.id).metrics).toMatchObject({ customerImportanceScore: 3, customerCount: 1, companyCount: 1, insightCount: 2 })
+    expect(engine.view(second.id).metrics).toMatchObject({ customerImportanceScore: 3, customerCount: 1, companyCount: 1, insightCount: 1 })
+    expect(engine.insights({ companyId: 'company-acme' }).total).toBe(2)
+    expect(engine.insights({ requirementId: first.id }).links).toEqual(expect.arrayContaining([expect.objectContaining({ insightId: 'insight-one', targetType: 'acceptance-criterion', targetId: 'AC-1' })]))
+  })
+
+  it('imports insights atomically, deduplicates them, and replays the same request idempotently', () => {
+    const engine = setup(); const view = create(engine)
+    const importAction = {
+      kind: 'insight.import' as const, participant: product, requirementId: view.id,
+      source: { id: 'source-import', kind: 'csv' as const, label: '客户导入.csv', accessStatus: 'available' as const },
+      rows: [{ id: 'import-one', sourceId: 'source-import', title: '失败提示', body: '支付失败后需要明确下一步操作。', importance: 'important' as const, capturedAt: 1 }],
+    }
+    const first = engine.apply('import-once', importAction)
+    const replay = engine.apply('import-once', importAction)
+    expect(first).toEqual(replay)
+    expect(engine.insights({ requirementId: view.id }).total).toBe(1)
+
+    const failed = engine.apply('import-invalid', { ...importAction, rows: [...importAction.rows, { id: 'bad', sourceId: 'missing-source', title: '坏数据', body: '来源不存在。', importance: 'want' as const, capturedAt: 2 }] })
+    expect(failed).toMatchObject({ ok: false, error: 'feedback source not found' })
+    expect(engine.insights({ requirementId: view.id }).total).toBe(1)
+    expect(engine.snapshot().feedbackSources).toHaveLength(1)
+  })
+
+  it('restores historical content by creating a new commit', () => {
+    const engine = setup(); const original = create(engine)
+    const saved = engine.apply('save-newer', { kind: 'version.save', participant: product, requirementId: original.id, baseCommit: original.currentCommit, markdown: `${original.version.markdown}\n新内容`, summary: '增加新内容' })
+    if (!saved.ok) throw new Error(saved.error)
+    const restored = engine.apply('restore-old', { kind: 'version.restore', participant: product, requirementId: original.id, commit: original.currentCommit, summary: '恢复历史版本' })
+    if (!restored.ok) throw new Error(restored.error)
+    expect(restored.requirement.currentCommit).not.toBe(original.currentCommit)
+    expect(restored.requirement.currentCommit).not.toBe(saved.requirement.currentCommit)
+    expect(restored.requirement.version.markdown).toBe(original.version.markdown)
   })
 
   it('blocks product gate until second review completes and blocking items resolve', async () => {

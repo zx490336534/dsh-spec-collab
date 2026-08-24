@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { CollaborationEngine } from './engine.ts'
-import { API_PREFIX, parseEnvelope } from './protocol.ts'
+import { API_PREFIX, parseEnvelope, type CollaborationEvent, type InsightImportance } from './protocol.ts'
+import { buildStructuredDiff } from './structured-diff.ts'
 import type { DshReviewCoordinator } from './review-runtime.ts'
 
-const BODY_LIMIT = 2 * 1024 * 1024
+const BODY_LIMIT = 6 * 1024 * 1024
 const HEARTBEAT_MS = 15_000
 function json(res: ServerResponse, status: number, body: unknown): void { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' }); res.end(JSON.stringify(body)) }
 function trusted(req: IncomingMessage): boolean { const remote = req.socket.remoteAddress; if (!(remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1')) return false; if (req.headers['sec-fetch-site'] === 'cross-site') return false; const origin = req.headers.origin; if (origin === undefined) return true; try { return new URL(origin).host === req.headers.host } catch { return false } }
@@ -14,6 +15,27 @@ export function makeRoutes(engine: CollaborationEngine, coordinator: DshReviewCo
   const guard = (req: IncomingMessage, res: ServerResponse): boolean => { if (trusted(req)) return true; json(res, 403, { ok: false, error: 'forbidden' }); return false }
   return [
     { kind: 'exact', path: `${API_PREFIX}/state`, handler: (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; const state = engine.snapshot(); json(res, 200, { revision: state.revision, participants: state.participants, requirements: engine.list() }) } },
+    { kind: 'exact', path: `${API_PREFIX}/directory`, handler: (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; json(res, 200, { ok: true, participants: engine.directory() }) } },
+    { kind: 'exact', path: `${API_PREFIX}/notifications`, handler: (req, res) => {
+      if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return
+      const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`); const participantId = url.searchParams.get('participantId') ?? ''
+      if (participantId.length < 8) return json(res, 400, { ok: false, error: 'invalid-participant-query' })
+      json(res, 200, { ok: true, ...engine.notifications(participantId, Number(url.searchParams.get('page') ?? 1), Number(url.searchParams.get('pageSize') ?? 50)) })
+    } },
+    { kind: 'exact', path: `${API_PREFIX}/insights`, handler: (req, res) => {
+      if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return
+      const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`); const value = (key: string): string | undefined => url.searchParams.get(key) || undefined
+      const requirementId = value('requirementId'); const customerId = value('customerId'); const companyId = value('companyId'); const sourceId = value('sourceId'); const importance = value('importance') as InsightImportance | undefined
+      json(res, 200, { ok: true, ...engine.insights({ ...(requirementId ? { requirementId } : {}), ...(customerId ? { customerId } : {}), ...(companyId ? { companyId } : {}), ...(sourceId ? { sourceId } : {}), ...(importance ? { importance } : {}), page: Number(value('page') ?? 1), pageSize: Number(value('pageSize') ?? 50) }) })
+    } },
+    { kind: 'exact', path: `${API_PREFIX}/diff`, handler: async (req, res) => {
+      if (!guard(req, res)) return
+      try {
+        if (req.method === 'GET') { const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`); return json(res, 200, { ok: true, diff: engine.diff(url.searchParams.get('requirementId') ?? '', url.searchParams.get('baseCommit') ?? '', url.searchParams.get('headCommit') || undefined) }) }
+        if (req.method === 'POST') { if (!(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { ok: false, error: 'json-required' }); const body = await readJson(req) as { before?: unknown; after?: unknown; baseLabel?: unknown; headLabel?: unknown }; if (typeof body.before !== 'string' || typeof body.after !== 'string') return json(res, 400, { ok: false, error: 'invalid-diff-preview' }); return json(res, 200, { ok: true, diff: buildStructuredDiff(body.before, body.after, typeof body.baseLabel === 'string' ? body.baseLabel : undefined, typeof body.headLabel === 'string' ? body.headLabel : undefined) }) }
+        return json(res, 405, { ok: false, error: 'method-not-allowed' })
+      } catch (error) { return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }) }
+    } },
     { kind: 'exact', path: `${API_PREFIX}/review-workspaces`, handler: async (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; try { json(res, 200, { ok: true, workspaces: await coordinator.reviewWorkspaces() }) } catch (error) { json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }) } } },
     { kind: 'exact', path: `${API_PREFIX}/version`, handler: (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; try { const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`); const requirementId = url.searchParams.get('requirementId') ?? ''; const commit = url.searchParams.get('commit') ?? ''; json(res, 200, { ok: true, version: engine.version(requirementId, commit) }) } catch (error) { json(res, 404, { ok: false, error: error instanceof Error ? error.message : String(error) }) } } },
     { kind: 'exact', path: `${API_PREFIX}/my-items`, handler: (req, res) => {
@@ -47,6 +69,6 @@ export function makeRoutes(engine: CollaborationEngine, coordinator: DshReviewCo
         return json(res, 405, { ok: false, error: 'method-not-allowed' })
       } catch (error) { return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }) }
     } },
-    { kind: 'exact', path: `${API_PREFIX}/events`, handler: (req, res) => { if (req.method !== 'GET') { res.writeHead(405); res.end(); return } if (!guard(req, res)) return; res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' }); const push = (): void => { res.write(`data: ${JSON.stringify({ revision: engine.snapshot().revision })}\n\n`) }; const unsubscribe = engine.subscribe(push); const heartbeat = setInterval(() => { res.write(': ping\n\n') }, HEARTBEAT_MS); const close = (): void => { clearInterval(heartbeat); unsubscribe() }; req.once('close', close); res.once('close', close); push() } },
+    { kind: 'exact', path: `${API_PREFIX}/events`, handler: (req, res) => { if (req.method !== 'GET') { res.writeHead(405); res.end(); return } if (!guard(req, res)) return; res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' }); const push = (event: CollaborationEvent): void => { res.write(`data: ${JSON.stringify(event)}\n\n`) }; const unsubscribe = engine.subscribe(push); const heartbeat = setInterval(() => { res.write(': ping\n\n') }, HEARTBEAT_MS); const close = (): void => { clearInterval(heartbeat); unsubscribe() }; req.once('close', close); res.once('close', close); push({ types: ['state.synced'], revision: engine.snapshot().revision }) } },
   ]
 }

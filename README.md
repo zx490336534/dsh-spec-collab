@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/dsh-spec-collab?style=flat-square)](https://www.npmjs.com/package/dsh-spec-collab)
 [![license](https://img.shields.io/npm/l/dsh-spec-collab?style=flat-square)](LICENSE)
 
-DeepSeek Harness 的独立双面插件，用于把产品的原始需求澄清为研发和开发 AI 可直接理解的 Ready Spec。产品、研发、产品 AI 与研发 AI 在同一份 Git 版本化 Markdown 上完成初审、逐项回复、二次审核、候选 patch、产研共审、Decision、分角色确认与 Ready 质量门。
+DeepSeek Harness 的需求“编辑校样台”，用于把原始需求澄清为研发和开发 AI 可直接理解的 Ready Spec。需求文档是主画布，评论、客户洞察、决策、版本差异和 AI 建议通过批注边栏与全屏抽屉完成闭环。
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
@@ -81,15 +81,18 @@ dsh plugin --profile web update dsh-spec-collab@latest
 - 正式正文只存在 `requirements/<id>/spec.md`，每次显式保存生成一个 Git commit。
 - 保存携带 `baseCommit`；过期或存在外部未提交修改时拒绝覆盖。
 - `FACT / INFERENCE / ASSUMPTION / TO_VERIFY` 结构化 Review Item；`FACT` 强制可访问且带版本的证据。
-- 产品 AI 初审、产品 AI 二审、研发 AI 预审、变更审核四类独立 DSH review session。
-- 每条实质评论提交后自动启动 AI 分析，回复必须包含理解、证据或 `TO_VERIFY`、影响章节/AC 和建议处置。
+- 同一需求在同一流程阶段复用一个 DSH AI session；审核、评论分析和追问只追加增量提示，进入下一阶段后再创建新会话。
+- 每条实质评论提交后自动进入当前阶段 AI 会话，回复必须包含理解、证据或 `TO_VERIFY`、影响章节/AC 和建议处置。
 - AI 只能提交 Review Item、评论分析和候选 patch；不能写 Git、代替人确认或标记 Ready。
 - 保存和 patch 接受后自动触发 change review；候选 patch 基于精确 commit，过期自动失效。
 - Decision、Comment、Confirmation 分离；确认绑定 commit，可按 section/AC 局部失效。
 - Ready 门检查目标与用户结果、稳定 AC、范围与非范围、业务语义、证据来源、测试约束。
 - Ready 输出包含 commit SHA、稳定 AC、Decision、来源、非阻塞 Open Questions 和产品/研发确认人。
 - Agent 工具：`spec_list`、`spec_read`、`spec_reply`、`spec_submit_review`、`spec_propose_patch`。
-- Host 权威协作账本 + SSE，多浏览器刷新后仍可继续。
+- v3 协作账本、插件内通知和 SSE，多浏览器刷新后仍可继续；评论支持页面级/行内、提及、指派、筛选、重开和深链。
+- 客户、公司、来源和洞察为独立实体；洞察可关联多个需求、章节或 AC，支持 CSV/Markdown 原子导入和去重。
+- 本地草稿存入 IndexedDB，异常关闭后可恢复；正式保存仍由 Git commit 承载。
+- 版本历史与 AI patch 共用结构化行级 diff，未变上下文可折叠；恢复历史会创建新 commit。
 - 新建需求必须选择一个 DSH 工作区；所有 AI 审核和评论分析 session 固定挂载该工作区，不会落入未分组 session。
 - 支持默认 AI 上下文与工作区专属上下文合并，统一声明 Skill、MCP server、本地参考文档和 Agent Preset。
 
@@ -176,22 +179,40 @@ dsh plugin --profile web add "link:$(pwd)"
 
 首次安装或 Host 代码变更后重启现有 `dsh web`。Client 开发时需在 DeepSeek Harness checkout 运行 `pnpm run dev:web`，插件侧运行 `pnpm run bundle --watch`，现有 GUI 的 client-plugin HMR 才会接收 bundle 更新。
 
-## 数据
+## 键盘与响应式工作台
+
+- `Cmd/Ctrl+S`：保存到版本库；缺少改动说明时会解释禁用原因。
+- `Cmd/Ctrl+Shift+F`：进入或退出正文专注模式。
+- 页签支持左右方向键与 `Home/End`；分栏支持方向键调宽，按住 `Shift` 加速。
+- ≥1280px 使用三栏；960～1279px 收起需求导航；小于 960px 使用“需求列表 / 需求正文 / 协作”分段切换。
+
+## 客户洞察导入
+
+CSV 必填 `body`，可选 `title`、`customer`、`company`、`external_ref`、`source`、`importance`、`captured_at` 和 `targets`。Markdown 的每个二级标题对应一条洞察。单文件最大 5 MB、最多 2,000 条，提交前会展示新增、更新、重复和逐行错误，服务端以单个幂等动作原子提交。
+
+[下载 CSV 模板](docs/insight-import-template.csv) · [查看 Markdown 模板](docs/insight-import-template.md)
+
+## 数据与迁移
 
 ```text
 ~/.dsh/spec-collab/
-  collaboration-v2.json       # Review/Comment/Decision/Confirmation/ActionItem/AI run
+  collaboration-v2.json       # 保留的 v0.2.x 原始数据，供回滚读取
+  collaboration-v2.backup-<timestamp>.json
+  collaboration-v3.json       # 协作、通知、洞察、统一指标和 AI 阶段会话
   repository/.git/            # 正式版本历史
   repository/requirements/
     <requirement-id>/spec.md
 ```
 
-Git 是正式 Spec 版本的唯一事实源；协作账本不保存第二套 Markdown 历史。
+Git 是正式 Spec 版本的唯一事实源；协作账本不保存第二套 Markdown 历史。未正式保存的草稿只保存在当前浏览器 IndexedDB。
+
+[阅读 v3 迁移、回滚与隐私说明](docs/migration-v3.md)
 
 ## 安全与限制
 
 - 默认仅允许 loopback + same-origin 浏览器请求。通过域名开放给团队前，需要在 DSH 前配置真实认证和可信反向代理策略。
 - 花名用于协作归因，不是强身份认证；当前版本不提供 OAuth、组织、细粒度 ACL。
+- 客户记录只保存显示名、公司名和外部编号，不保存邮箱、电话、凭证；重要度分不阻断 Ready。
 - Markdown 禁用原始 HTML；正文最大 2 MB。
 - AI review session 使用 DSH 既有 preset/sandbox 权限，不发送权限升级命令。
 - 当前版本不实现 CRDT/OT、实时光标、附件上传和三方合并编辑器；并发保存使用 commit 冲突阻断。

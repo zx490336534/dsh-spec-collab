@@ -11,6 +11,7 @@ const FOLLOW_UP_METADATA = '\n\n<!-- dsh-spec-collab-follow-up:'
 
 export class DshReviewCoordinator implements AiCoordinator {
   private readonly prompts: ResolvedReviewPrompts
+  private readonly stageSessions = new Map<string, Promise<string>>()
   constructor(private readonly api: ApiProxy, private readonly contexts = new ReviewContextCatalog(), prompts: ReviewPromptConfig = {}) {
     this.prompts = resolveReviewPrompts(prompts)
   }
@@ -22,17 +23,21 @@ export class DshReviewCoordinator implements AiCoordinator {
   async assertWorkspaceAvailable(workspaceId: string): Promise<void> {
     await this.resolveWorkspace(workspaceId)
   }
-  async requestReview(input: { requirement: RequirementView; run: AiReviewRun }): Promise<string> {
-    const context = this.contexts.resolve(input.requirement.workspaceId)
-    const workspace = await this.resolveWorkspace(context.workspaceId)
-    const snapshot = await readWorkspaceSnapshot(workspace.path, context.documentPaths)
-    return this.launch(`Spec ${input.run.kind}: ${input.requirement.title}`, reviewPrompt(input.requirement, input.run, context, workspace, snapshot, this.prompts), context.workspaceId, context.agentPreset)
+  async requestReview(input: { requirement: RequirementView; run: AiReviewRun; sessionId?: string }): Promise<string> {
+    return this.inStageSession(input.requirement, input.sessionId, reviewContinuationPrompt(input.requirement, input.run, this.prompts), async () => {
+      const context = this.contexts.resolve(input.requirement.workspaceId)
+      const workspace = await this.resolveWorkspace(context.workspaceId)
+      const snapshot = await readWorkspaceSnapshot(workspace.path, context.documentPaths)
+      return this.launch(`Spec ${input.run.kind}: ${input.requirement.title}`, reviewPrompt(input.requirement, input.run, context, workspace, snapshot, this.prompts), context.workspaceId, context.agentPreset)
+    })
   }
-  async requestCommentReply(input: { requirement: RequirementView; comment: CommentThread }): Promise<string> {
-    const context = this.contexts.resolve(input.requirement.workspaceId)
-    const workspace = await this.resolveWorkspace(context.workspaceId)
-    const snapshot = await readWorkspaceSnapshot(workspace.path, context.documentPaths)
-    return this.launch(`Spec comment analysis: ${input.requirement.title}`, commentPrompt(input.requirement, input.comment, context, workspace, snapshot, this.prompts), context.workspaceId, context.agentPreset)
+  async requestCommentReply(input: { requirement: RequirementView; comment: CommentThread; sessionId?: string }): Promise<string> {
+    return this.inStageSession(input.requirement, input.sessionId, commentContinuationPrompt(input.requirement, input.comment, this.prompts), async () => {
+      const context = this.contexts.resolve(input.requirement.workspaceId)
+      const workspace = await this.resolveWorkspace(context.workspaceId)
+      const snapshot = await readWorkspaceSnapshot(workspace.path, context.documentPaths)
+      return this.launch(`Spec ${input.requirement.stage}: ${input.requirement.title}`, commentPrompt(input.requirement, input.comment, context, workspace, snapshot, this.prompts), context.workspaceId, context.agentPreset)
+    })
   }
   async conversation(sessionId: string): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
     const history = await this.api.sessions.history(request({ sessionId: sessionId as never }))
@@ -62,6 +67,21 @@ export class DshReviewCoordinator implements AiCoordinator {
     if (content === '') throw new Error('追问内容不能为空')
     const metadata = Buffer.from(content, 'utf8').toString('base64url')
     const promptText = `${renderPrompt(this.prompts.followUp, { CONTENT: content }).trim()}${FOLLOW_UP_METADATA}${metadata} -->`
+    const prompted = await this.api.sessions.prompt(request({ sessionId: sessionId as never, mode: 'queue' as const, content: [{ type: 'text' as const, text: promptText }] }))
+    if (!prompted.result.ok) throw failure(prompted.result.error)
+  }
+  private async inStageSession(requirement: RequirementView, existingSessionId: string | undefined, continuation: string, launch: () => Promise<string>): Promise<string> {
+    const key = `${requirement.id}:${requirement.stage}:${requirement.stageCycle}`
+    if (existingSessionId !== undefined) {
+      const session = Promise.resolve(existingSessionId); this.stageSessions.set(key, session)
+      await this.promptExisting(existingSessionId, continuation); return existingSessionId
+    }
+    const pending = this.stageSessions.get(key)
+    if (pending !== undefined) { const sessionId = await pending; await this.promptExisting(sessionId, continuation); return sessionId }
+    const created = launch(); this.stageSessions.set(key, created)
+    try { return await created } catch (error) { if (this.stageSessions.get(key) === created) this.stageSessions.delete(key); throw error }
+  }
+  private async promptExisting(sessionId: string, promptText: string): Promise<void> {
     const prompted = await this.api.sessions.prompt(request({ sessionId: sessionId as never, mode: 'queue' as const, content: [{ type: 'text' as const, text: promptText }] }))
     if (!prompted.result.ok) throw failure(prompted.result.error)
   }
@@ -129,5 +149,12 @@ function reviewPrompt(requirement: RequirementView, run: AiReviewRun, context: R
   return [common(requirement, context, workspace, workspaceSnapshot, prompts), `Review run ID: ${run.id}`, `Review kind: ${run.kind}`, `AI session ID: {{SESSION_ID}}`, '', tasks[run.kind]].join('\n')
 }
 function commentPrompt(requirement: RequirementView, comment: CommentThread, context: ReturnType<ReviewContextCatalog['resolve']>, workspace: ReviewWorkspaceSummary, workspaceSnapshot: string, prompts: ResolvedReviewPrompts): string {
-  return [common(requirement, context, workspace, workspaceSnapshot, prompts), `Comment ID: ${comment.id}`, `Anchor quote: ${comment.anchor.quote}`, `Human comment: ${comment.body}`, `AI session ID: {{SESSION_ID}}`, '', prompts.comment].join('\n')
+  return [common(requirement, context, workspace, workspaceSnapshot, prompts), `Comment ID: ${comment.id}`, `Comment scope: ${comment.scope}`, `Anchor quote: ${comment.anchor?.quote ?? '整篇需求'}`, `Human comment: ${comment.body}`, `AI session ID: {{SESSION_ID}}`, '', prompts.comment].join('\n')
+}
+function reviewContinuationPrompt(requirement: RequirementView, run: AiReviewRun, prompts: ResolvedReviewPrompts): string {
+  const tasks: Record<AiReviewRun['kind'], string> = { 'product-first': prompts.productFirst, 'product-second': prompts.productSecond, 'engineering-precheck': prompts.engineeringPrecheck, 'change-review': prompts.changeReview }
+  return ['继续当前需求同一阶段的审核。不要重复读取已知背景，只使用 spec_read 获取当前 commit 的增量变化。', `Requirement ID: ${requirement.id}`, `Current stage: ${requirement.stage}`, `Pinned commit: ${requirement.currentCommit}`, `Review run ID: ${run.id}`, `Review kind: ${run.kind}`, '', tasks[run.kind]].join('\n')
+}
+function commentContinuationPrompt(requirement: RequirementView, comment: CommentThread, prompts: ResolvedReviewPrompts): string {
+  return ['在当前需求同一阶段的既有上下文中分析这条新评论。不要重新扫描整个工作区；仅在评论涉及新的实现事实时做最小增量查询。', `Requirement ID: ${requirement.id}`, `Pinned commit: ${requirement.currentCommit}`, `Comment ID: ${comment.id}`, `Comment scope: ${comment.scope}`, `Anchor quote: ${comment.anchor?.quote ?? '整篇需求'}`, `Human comment: ${comment.body}`, '', prompts.comment].join('\n')
 }

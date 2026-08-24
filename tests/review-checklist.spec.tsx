@@ -1,17 +1,31 @@
 // @vitest-environment jsdom
 
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RequirementView } from '../src/protocol.ts'
 import type { SpecApi } from '../src/client/api.ts'
 import { DiscussionPanel, InlineCommentComposer, InlineReviewComposer, ReviewPanel, annotationScrollTargets, type EditorSelection } from '../src/client/SpecWorkbench.tsx'
+import { AccessibleDialog } from '../src/client/AccessibleDialog.tsx'
 
 const roots: Array<ReturnType<typeof createRoot>> = [];
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 afterEach(() => { for (const root of roots.splice(0)) act(() => root.unmount()); document.body.innerHTML = '' })
 
 describe('review checklist', () => {
+  it('traps dialog focus, closes with Escape, and restores the current trigger', async () => {
+    function Harness() { const [open, setOpen] = useState(false); return <><button aria-label="登记身份" onClick={() => setOpen(true)}>登记身份</button>{open && <AccessibleDialog title="身份设置" close={() => setOpen(false)}><label>花名<input autoFocus/></label><button onClick={() => setOpen(false)}>取消</button></AccessibleDialog>}</> }
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host); roots.push(root)
+    await act(async () => { root.render(<Harness/>) })
+    const trigger = host.querySelector('button') as HTMLButtonElement
+    trigger.focus(); await act(async () => { trigger.click(); await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(document.activeElement?.tagName).toBe('INPUT')
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await new Promise(resolve => setTimeout(resolve, 0)) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
   it('tracks annotation markers against the real ProseMirror scroll container', () => {
     const root = document.createElement('div')
     root.innerHTML = '<div class="toastui-editor-main"><div class="toastui-editor-ww-container"><div class="toastui-editor-contents">hidden preview</div><div class="ProseMirror toastui-editor-contents">visible editor</div></div></div>'

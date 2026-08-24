@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -42,5 +43,16 @@ describe('GitRequirementStore', () => {
     const created = store.create({ title: '重试策略', rawRequirement: '需求', sources: [], participant: product })
     store.remove(created.requirementId, product)
     expect(store.read(created.requirementId, created.version.commit).markdown).toContain('# 重试策略')
+  })
+
+  it('builds a commit URL only when an HTTP-compatible origin exists', () => {
+    const local = new GitRequirementStore(mkdtempSync(join(tmpdir(), 'spec-git-')))
+    const localCreated = local.create({ title: '本地仓库', rawRequirement: '需求', sources: [], participant: product })
+    expect(local.commitUrl(localCreated.version.commit)).toBeUndefined()
+    const root = mkdtempSync(join(tmpdir(), 'spec-git-'))
+    const store = new GitRequirementStore(root)
+    execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.example.com:team/spec-repo.git'], { cwd: root })
+    const created = store.create({ title: '远程链接', rawRequirement: '需求', sources: [], participant: product })
+    expect(store.commitUrl(created.version.commit)).toBe(`https://gitlab.example.com/team/spec-repo/commit/${created.version.commit}`)
   })
 })

@@ -12,6 +12,11 @@ export interface CreateRequirementInput { title: string; rawRequirement: string;
 export interface SaveVersionInput { requirementId: string; baseCommit: string; markdown: string; participant: ParticipantSnapshot; summary: string }
 
 export class GitRequirementStore {
+  private readonly versionCache = new Map<string, RequirementVersion>()
+  private readonly headCache = new Map<string, string>()
+  private readonly historyCache = new Map<string, Array<Omit<RequirementVersion, 'markdown'>>>()
+  private commitBaseUrl: string | null | undefined
+
   constructor(readonly root: string) { this.ensureRepository() }
 
   create(input: CreateRequirementInput): { requirementId: string; version: RequirementVersion } {
@@ -21,7 +26,8 @@ export class GitRequirementStore {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, markdown, 'utf8')
     const commit = this.commit(requirementId, input.participant, 'Create requirement')
-    return { requirementId, version: this.read(requirementId, commit) }
+    const version = this.rememberCommittedVersion(requirementId, commit, markdown, input.participant, 'Create requirement')
+    return { requirementId, version }
   }
 
   save(input: SaveVersionInput): RequirementVersion {
@@ -31,24 +37,26 @@ export class GitRequirementStore {
     if (onDisk !== this.read(input.requirementId, current).markdown) throw new Error('spec has external uncommitted changes')
     if (input.summary.trim() === '') throw new Error('change summary is required')
     if (input.markdown.length > 2_000_000) throw new Error('spec exceeds 2 MB')
+    if (input.markdown === onDisk) throw new Error('no changes to save')
     writeFileSync(this.specPath(input.requirementId), input.markdown, 'utf8')
     this.git(['add', this.relativeSpecPath(input.requirementId)])
-    const staged = this.git(['diff', '--cached', '--quiet'], true)
-    if (staged.status === 0) throw new Error('no changes to save')
     const commit = this.commitStaged(input.participant, input.summary.trim())
-    return this.read(input.requirementId, commit)
+    return this.rememberCommittedVersion(input.requirementId, commit, input.markdown, input.participant, input.summary.trim(), current)
   }
 
   read(requirementId: string, commit?: string): RequirementVersion {
     assertRequirementId(requirementId)
     const resolved = commit ?? this.head(requirementId)
+    const cacheKey = `${requirementId}:${resolved}`
+    const cached = this.versionCache.get(cacheKey)
+    if (cached !== undefined) return structuredClone(cached)
     const markdown = this.gitText(['show', `${resolved}:${this.relativeSpecPath(requirementId)}`])
     const fields = this.gitText(['show', '-s', '--format=%H%x1f%P%x1f%at%x1f%an%x1f%ae%x1f%B', resolved]).split('\x1f')
     const [sha = resolved, parents = '', seconds = '0', nickname = 'unknown', email = '', ...bodyParts] = fields
     const body = bodyParts.join('\x1f').trim()
     const role = /DSH-Role:\s*(product|engineering)/.exec(body)?.[1] as ParticipantSnapshot['role'] | undefined
     const summary = body.split('\n')[0] ?? 'Saved version'
-    return {
+    const version: RequirementVersion = {
       commit: sha,
       ...(parents.split(' ')[0] ? { parentCommit: parents.split(' ')[0] } : {}),
       markdown,
@@ -56,23 +64,29 @@ export class GitRequirementStore {
       summary,
       createdAt: Number(seconds) * 1000,
     }
+    this.versionCache.set(cacheKey, version)
+    return structuredClone(version)
   }
 
   history(requirementId: string): Array<Omit<RequirementVersion, 'markdown'>> {
     assertRequirementId(requirementId)
+    const cached = this.historyCache.get(requirementId)
+    if (cached !== undefined) return structuredClone(cached)
     const output = this.gitText(['log', '--format=%H%x1f%P%x1f%at%x1f%an%x1f%ae%x1f%B%x1e', '--', this.relativeSpecPath(requirementId)])
-    return output.split('\x1e').map(row => row.trim()).filter(Boolean).map(row => {
+    const history: Array<Omit<RequirementVersion, 'markdown'>> = output.split('\x1e').map(row => row.trim()).filter(Boolean).map(row => {
       const [commit = '', parents = '', seconds = '0', nickname = 'unknown', email = '', ...bodyParts] = row.split('\x1f')
       const body = bodyParts.join('\x1f').trim()
       const role = /DSH-Role:\s*(product|engineering)/.exec(body)?.[1] as ParticipantSnapshot['role'] | undefined
       return {
         commit,
         ...(parents.split(' ')[0] ? { parentCommit: parents.split(' ')[0] } : {}),
-        author: { participantId: email.replace(/@dsh\.local$/, '') || 'unknown', nickname, role: role ?? 'product', kind: 'human' },
+        author: { participantId: email.replace(/@dsh\.local$/, '') || 'unknown', nickname, role: role ?? 'product', kind: 'human' as const },
         summary: body.split('\n')[0] ?? 'Saved version',
         createdAt: Number(seconds) * 1000,
       }
     })
+    this.historyCache.set(requirementId, history)
+    return structuredClone(history)
   }
 
   diff(requirementId: string, baseCommit: string, headCommit?: string): string {
@@ -80,16 +94,35 @@ export class GitRequirementStore {
     return this.gitText(['diff', baseCommit, headCommit ?? this.head(requirementId), '--', this.relativeSpecPath(requirementId)])
   }
 
+  commitUrl(commit: string): string | undefined {
+    if (!/^[a-f0-9]{40}$/.test(commit)) return undefined
+    if (this.commitBaseUrl !== undefined) return this.commitBaseUrl === null ? undefined : `${this.commitBaseUrl}/commit/${commit}`
+    let origin: string
+    try { origin = this.gitText(['config', '--get', 'remote.origin.url']).trim() } catch { this.commitBaseUrl = null; return undefined }
+    if (origin === '') { this.commitBaseUrl = null; return undefined }
+    const scp = /^git@([^:]+):(.+)$/.exec(origin)
+    const normalized = scp ? `https://${scp[1]}/${scp[2]}` : origin.replace(/^ssh:\/\/git@/, 'https://')
+    if (!/^https?:\/\//.test(normalized)) { this.commitBaseUrl = null; return undefined }
+    this.commitBaseUrl = normalized.replace(/\.git$/, '').replace(/\/$/, '')
+    return `${this.commitBaseUrl}/commit/${commit}`
+  }
+
   remove(requirementId: string, participant: ParticipantSnapshot): void {
     assertRequirementId(requirementId)
     if (!existsSync(this.specPath(requirementId))) throw new Error('requirement spec not found')
     this.git(['rm', '-r', `requirements/${requirementId}`])
     this.commitStaged(participant, 'Delete requirement')
+    this.headCache.delete(requirementId); this.historyCache.delete(requirementId)
+    for (const key of this.versionCache.keys()) if (key.startsWith(`${requirementId}:`)) this.versionCache.delete(key)
   }
 
   head(requirementId: string): string {
     assertRequirementId(requirementId)
-    return this.gitText(['log', '-1', '--format=%H', '--', this.relativeSpecPath(requirementId)]).trim()
+    const cached = this.headCache.get(requirementId)
+    if (cached !== undefined) return cached
+    const resolved = this.gitText(['log', '-1', '--format=%H', '--', this.relativeSpecPath(requirementId)]).trim()
+    this.headCache.set(requirementId, resolved)
+    return resolved
   }
 
   private commit(requirementId: string, participant: ParticipantSnapshot, summary: string): string {
@@ -105,8 +138,18 @@ export class GitRequirementStore {
       GIT_COMMITTER_NAME: participant.nickname,
       GIT_COMMITTER_EMAIL: `${participant.participantId}@dsh.local`,
     }
-    execFileSync('git', ['commit', '-m', summary, '-m', `DSH-Role: ${participant.role}`], { cwd: this.root, env, stdio: 'pipe' })
+    execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '--no-verify', '-m', summary, '-m', `DSH-Role: ${participant.role}`], { cwd: this.root, env, stdio: 'pipe' })
     return this.gitText(['rev-parse', 'HEAD']).trim()
+  }
+
+  private rememberCommittedVersion(requirementId: string, commit: string, markdown: string, participant: ParticipantSnapshot, summary: string, parentCommit?: string): RequirementVersion {
+    const version: RequirementVersion = { commit, ...(parentCommit ? { parentCommit } : {}), markdown, author: participant, summary, createdAt: Date.now() }
+    this.headCache.set(requirementId, commit)
+    this.versionCache.set(`${requirementId}:${commit}`, version)
+    const metadata = withoutMarkdown(version)
+    const history = this.historyCache.get(requirementId)
+    this.historyCache.set(requirementId, history === undefined ? [metadata] : [metadata, ...history])
+    return structuredClone(version)
   }
 
   private ensureRepository(): void {
@@ -120,6 +163,11 @@ export class GitRequirementStore {
     try { execFileSync('git', args, { cwd: this.root, stdio: 'pipe' }); return { status: 0 } }
     catch (error) { if (allowFailure) return { status: (error as { status?: number }).status ?? 1 }; throw error }
   }
+}
+
+function withoutMarkdown(version: RequirementVersion): Omit<RequirementVersion, 'markdown'> {
+  const { markdown: _markdown, ...metadata } = version
+  return metadata
 }
 
 function slug(title: string): string {

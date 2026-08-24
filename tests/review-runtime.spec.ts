@@ -5,7 +5,7 @@ import { ReviewContextCatalog } from '../src/review-context.ts'
 import { DshReviewCoordinator } from '../src/review-runtime.ts'
 
 describe('DshReviewCoordinator context mounting', () => {
-  it('creates review and comment sessions with the selected workspace, preset, and merged context prompt', async () => {
+  it('reuses one session within a stage and starts a new session after advancing', async () => {
     const createdWith: Array<Record<string, unknown>> = []
     const prompts: string[] = []
     let sessionNumber = 0
@@ -24,7 +24,7 @@ describe('DshReviewCoordinator context mounting', () => {
       workspaces: [{ workspaceId: 'workspace-payments', skills: ['payment-domain'], mcpServers: ['payments'], documentPaths: ['/docs/payments'], agentPreset: 'spec-payments' }],
     })
     const coordinator = new DshReviewCoordinator(api, contexts)
-    const requirement = { id: 'requirement-1', title: '部分退款', currentCommit: 'a'.repeat(40), workspaceId: 'workspace-payments' } as RequirementView
+    const requirement = { id: 'requirement-1', title: '部分退款', stage: 'product-review', stageCycle: 0, currentCommit: 'a'.repeat(40), workspaceId: 'workspace-payments' } as RequirementView
     const run = { id: 'run-1', kind: 'product-first' } as AiReviewRun
     const comment = { id: 'comment-1', anchor: { quote: '部分退款' }, body: '需要确认退款上限。' } as CommentThread
 
@@ -32,28 +32,34 @@ describe('DshReviewCoordinator context mounting', () => {
     await coordinator.requestReview({ requirement, run })
     await coordinator.requestCommentReply({ requirement, comment })
 
-    expect(createdWith).toEqual([{ workspaceId: 'workspace-payments', agentPreset: 'spec-payments' }, { workspaceId: 'workspace-payments', agentPreset: 'spec-payments' }])
-    for (const prompt of prompts) {
-      expect(prompt).toContain('`requirements-review`')
-      expect(prompt).toContain('`payment-domain`')
-      expect(prompt).toContain('`mcp__confluence__*`')
-      expect(prompt).toContain('`mcp__payments__*`')
-      expect(prompt).toContain('`/docs/shared`')
-      expect(prompt).toContain('`/docs/payments`')
-      expect(prompt).toContain('工作区根目录：`/work/payments`')
-      expect(prompt).toContain('AGENTS.md')
-      expect(prompt).toContain('README')
-      expect(prompt).toContain('项目清单')
-      expect(prompt).toContain('必须先实际读取工作区上下文')
-      expect(prompt).toContain('审核记录与正式文档必须分层')
-      expect(prompt).toContain('行动按钮（CTA）')
-      expect(prompt).toContain('待补充资料')
-      expect(prompt).toContain('不得堆入候选 Spec 正文')
-      expect(prompt).toContain('建议不超过 45 个汉字')
-      expect(prompt).toContain('统一风格标识（不用 canonical key）')
-      expect(prompt).toContain('前提 / 操作 / 预期结果')
-      expect(prompt).toContain('合并重复内容')
-    }
+    expect(createdWith).toEqual([{ workspaceId: 'workspace-payments', agentPreset: 'spec-payments' }])
+    expect(prompts).toHaveLength(2)
+    expect(prompts[0]).toContain('`requirements-review`')
+    expect(prompts[0]).toContain('`payment-domain`')
+    expect(prompts[0]).toContain('`mcp__confluence__*`')
+    expect(prompts[0]).toContain('`mcp__payments__*`')
+    expect(prompts[0]).toContain('`/docs/shared`')
+    expect(prompts[0]).toContain('`/docs/payments`')
+    expect(prompts[0]).toContain('工作区根目录：`/work/payments`')
+    expect(prompts[0]).toContain('AGENTS.md')
+    expect(prompts[0]).toContain('README')
+    expect(prompts[0]).toContain('项目清单')
+    expect(prompts[0]).toContain('必须先实际读取工作区上下文')
+    expect(prompts[0]).toContain('审核记录与正式文档必须分层')
+    expect(prompts[0]).toContain('行动按钮（CTA）')
+    expect(prompts[0]).toContain('待补充资料')
+    expect(prompts[0]).toContain('不得堆入候选 Spec 正文')
+    expect(prompts[0]).toContain('建议不超过 45 个汉字')
+    expect(prompts[0]).toContain('统一风格标识（不用 canonical key）')
+    expect(prompts[0]).toContain('前提 / 操作 / 预期结果')
+    expect(prompts[0]).toContain('合并重复内容')
+    expect(prompts[1]).toContain('Comment ID: comment-1')
+    expect(prompts[1]).toContain('不要重新扫描整个工作区')
+    expect(prompts[1]).not.toContain('工作区根目录')
+    expect(prompts[1]).not.toContain('项目清单')
+
+    await coordinator.requestReview({ requirement: { ...requirement, stage: 'product-confirmation', stageCycle: 1 }, run })
+    expect(createdWith).toHaveLength(2)
   })
 
   it('uses configured prompt overrides while preserving defaults for omitted prompts', async () => {

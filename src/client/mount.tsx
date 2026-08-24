@@ -50,10 +50,11 @@ export function mountSidebarEntry(): () => void {
     row.toggleAttribute('data-dsh-spec-collab-collapsed', rect.width > 0 ? rect.width < 64 : hostCollapsed)
   }
   const close = (): void => { document.documentElement.removeAttribute(ACTIVE); row?.classList.remove(css.entryActive!) }
+  const openDeepLink = (): void => { if (location.hash.startsWith('#spec-collab/')) { document.documentElement.setAttribute(ACTIVE, ''); row?.classList.add(css.entryActive!) } }
   const closeOnExternalNavigation = (event: MouseEvent): void => {
     if (!document.documentElement.hasAttribute(ACTIVE)) return
     const target = event.target instanceof Element ? event.target : undefined
-    if (target?.closest(VIEW) || target?.closest('[data-dsh-spec-collab-entry]')) return
+    if (target?.closest(VIEW) || target?.closest('[data-dsh-spec-collab-entry]') || target?.closest('[data-dsh-spec-collab-portal]')) return
     if (isSidebarChromeControl(target)) return
     const sidebarCollapsedBefore = document.documentElement.getAttribute(SIDEBAR_COLLAPSED)
     window.setTimeout(() => {
@@ -64,6 +65,7 @@ export function mountSidebarEntry(): () => void {
   }
   document.addEventListener('click', closeOnExternalNavigation, true)
   document.addEventListener(CLOSE_EVENT, close)
+  window.addEventListener('hashchange', openDeepLink)
   const toggle = (): void => {
     const opening = !document.documentElement.hasAttribute(ACTIVE)
     for (const name of document.documentElement.getAttributeNames()) {
@@ -96,6 +98,6 @@ export function mountSidebarEntry(): () => void {
   }
   const observer = new MutationObserver(() => { ensure(); syncSidebarState() })
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-dsh-sidebar-collapsed', 'data-sidebar-collapsed'] })
-  ensure()
-  return () => { observer.disconnect(); resizeObserver?.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, close); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
+  ensure(); openDeepLink()
+  return () => { observer.disconnect(); resizeObserver?.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, close); window.removeEventListener('hashchange', openDeepLink); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
 }

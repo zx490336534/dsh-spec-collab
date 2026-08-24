@@ -6,11 +6,12 @@ const product: ParticipantSnapshot = { participantId: 'product-1', nickname: '�
 
 function requirement(overrides: Partial<RequirementView> = {}): RequirementView {
   const base: RequirementView = {
-    id: 'requirement-1', title: '登录体验优化', stage: 'product-review', currentCommit: 'commit-1', workspaceId: 'workspace-1',
-    sources: [], reviewItems: [], comments: [], patches: [], decisions: [], confirmations: [], actionItems: [], aiRuns: [],
+    id: 'requirement-1', title: '登录体验优化', stage: 'product-review', stageCycle: 0, currentCommit: 'commit-1', workspaceId: 'workspace-1',
+    sources: [], reviewItems: [], comments: [], patches: [], decisions: [], confirmations: [], actionItems: [], aiRuns: [], aiConversations: [],
     createdAt: 1, updatedAt: 1,
     version: { commit: 'commit-1', markdown: '# 登录体验优化', author: product, summary: '创建需求', createdAt: 1 },
     history: [],
+    metrics: { openReviewCount: 0, openCommentCount: 0, pendingActionCount: 0, activeDecisionCount: 0, riskCount: 0, insightCount: 0, customerImportanceScore: 0, customerCount: 0, companyCount: 0, anonymousInsightCount: 0 },
     readiness: [
       { key: 'goal', passed: true, reasons: [] }, { key: 'acceptance', passed: true, reasons: [] },
       { key: 'scope', passed: true, reasons: [] }, { key: 'semantics', passed: true, reasons: [] },

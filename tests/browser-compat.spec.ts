@@ -101,4 +101,20 @@ describe('browser compatibility', () => {
       dispose()
     }
   })
+
+  it('keeps the workbench open when a portalled plugin dialog is clicked', async () => {
+    vi.useFakeTimers()
+    document.body.innerHTML = '<button aria-label="技能中心">技能中心</button><div data-dsh-spec-collab-portal><button class="dialogClose">关闭差异</button></div>'
+    const dispose = mountSidebarEntry()
+    try {
+      document.querySelector<HTMLButtonElement>('[data-dsh-spec-collab-entry]')?.click()
+      document.querySelector<HTMLButtonElement>('.dialogClose')?.click()
+      await vi.runAllTimersAsync()
+
+      expect(document.documentElement.hasAttribute('data-dsh-spec-collab-active')).toBe(true)
+    }
+    finally {
+      dispose()
+    }
+  })
 })

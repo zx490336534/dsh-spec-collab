@@ -65,6 +65,7 @@ function previousHeadingText(root: HTMLElement, block: HTMLElement): string {
 }
 
 export function commentTargetElements(root: HTMLElement, anchor: CommentThread['anchor']): HTMLElement[] {
+  if (anchor === undefined) return []
   const blocks = Array.from(root.querySelectorAll<HTMLElement>(reviewBlockSelector))
   const quote = anchor.quote.trim()
   const normalizedQuote = normalizeReviewText(quote)
