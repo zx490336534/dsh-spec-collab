@@ -119,3 +119,17 @@ test('小视口表单对话框滚动时保留标题与底部操作', async ({ pa
   expect(Math.abs(after.heading!.y - before.heading!.y)).toBeLessThanOrEqual(1)
   expect(Math.abs(after.submit!.y - before.submit!.y)).toBeLessThanOrEqual(1)
 })
+
+test('正文批注标记 hover 不显示大块背景且保留点击热区', async ({ page }) => {
+  await page.setViewportSize({ width: 1256, height: 844 })
+  await openWorkbench(page)
+  const marker = page.getByRole('button', { name: '打开问题：公开社区由哪个内容系统承载？' })
+  await marker.hover()
+  const style = await marker.evaluate(element => {
+    const rect = element.getBoundingClientRect()
+    return { background: getComputedStyle(element).backgroundColor, width: rect.width, height: rect.height }
+  })
+  expect(style.background).toBe('rgba(0, 0, 0, 0)')
+  expect(style.width).toBeGreaterThanOrEqual(44)
+  expect(style.height).toBeGreaterThanOrEqual(44)
+})

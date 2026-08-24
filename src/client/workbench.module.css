@@ -158,6 +158,7 @@ button:disabled { cursor: default; opacity: .52; }
 .documentAnchorHighlightSelected { outline: 1px solid rgba(11,107,79,.2); outline-offset: 2px; background: transparent; }
 .documentReviewAnchor, .documentCommentAnchor { position: absolute; box-sizing: border-box; width: 44px; height: 44px; min-height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; padding: 0; background: transparent; color: var(--green-deep); pointer-events: auto; box-shadow: none; }
 .documentReviewAnchor svg, .documentCommentAnchor svg { box-sizing: border-box; width: 27px; height: 27px; padding: 2px; background: transparent; filter: drop-shadow(0 2px 3px rgba(23,33,29,.13)); transition: transform 140ms ease, color 140ms ease, filter 140ms ease; }
+.documentReviewAnchor:hover, .documentCommentAnchor:hover { border-color: transparent; background: transparent; }
 .documentReviewAnchor:hover svg, .documentCommentAnchor:hover svg { transform: translateY(-1px); filter: drop-shadow(0 3px 4px rgba(23,33,29,.2)); }
 .documentCommentAnchor { color: var(--blue); }
 .documentReviewAnchorBlocking { color: #8d5017; }
