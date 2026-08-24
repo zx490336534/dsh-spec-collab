@@ -14,7 +14,14 @@ async function readJson(req: IncomingMessage): Promise<unknown> { const chunks: 
 export function makeRoutes(engine: CollaborationEngine, coordinator: DshReviewCoordinator): WebRoute[] {
   const guard = (req: IncomingMessage, res: ServerResponse): boolean => { if (trusted(req)) return true; json(res, 403, { ok: false, error: 'forbidden' }); return false }
   return [
-    { kind: 'exact', path: `${API_PREFIX}/state`, handler: (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; const state = engine.snapshot(); json(res, 200, { revision: state.revision, participants: state.participants, requirements: engine.list() }) } },
+    { kind: 'exact', path: `${API_PREFIX}/state`, handler: (req, res) => {
+      if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return
+      const state = engine.snapshot(); const summaries = engine.summaries(); const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`)
+      const requestedId = url.searchParams.get('requirementId'); const currentId = requestedId ?? summaries.find(item => item.archivedAt === undefined)?.id ?? summaries[0]?.id
+      let requirement
+      try { requirement = currentId ? engine.view(currentId) : undefined } catch {}
+      json(res, 200, { revision: state.revision, participants: state.participants, requirements: summaries, ...(requirement ? { requirement } : {}) })
+    } },
     { kind: 'exact', path: `${API_PREFIX}/directory`, handler: (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; json(res, 200, { ok: true, participants: engine.directory() }) } },
     { kind: 'exact', path: `${API_PREFIX}/notifications`, handler: (req, res) => {
       if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return

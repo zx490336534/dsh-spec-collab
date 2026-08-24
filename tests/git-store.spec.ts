@@ -55,4 +55,14 @@ describe('GitRequirementStore', () => {
     const created = store.create({ title: '远程链接', rawRequirement: '需求', sources: [], participant: product })
     expect(store.commitUrl(created.version.commit)).toBe(`https://gitlab.example.com/team/spec-repo/commit/${created.version.commit}`)
   })
+
+  it('removes credentials from HTTP remote commit links', () => {
+    const root = mkdtempSync(join(tmpdir(), 'spec-git-'))
+    const store = new GitRequirementStore(root)
+    execFileSync('git', ['remote', 'add', 'origin', 'https://user:secret-token@git.example.com/team/spec.git'], { cwd: root })
+    const created = store.create({ title: '安全远程链接', rawRequirement: '需求', sources: [], participant: product })
+    const url = store.commitUrl(created.version.commit)
+    expect(url).toBe(`https://git.example.com/team/spec/commit/${created.version.commit}`)
+    expect(url).not.toContain('secret-token')
+  })
 })

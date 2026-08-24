@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import { draftKey, safeHttpUrl, truncateGraphemes } from '../src/client/drafts.ts'
-import { resolveDeepLinkTarget } from '../src/client/SpecWorkbench.tsx'
-import type { RequirementView } from '../src/protocol.ts'
+import { mentionedParticipantIds, parseInsightFile, resolveDeepLinkTarget } from '../src/client/SpecWorkbench.tsx'
+import type { ParticipantSnapshot, RequirementView } from '../src/protocol.ts'
 
 describe('client safety utilities', () => {
   it('keeps drafts isolated by requirement and participant', () => { expect(draftKey('req-a', 'person-b')).toBe('req-a:person-b') })
@@ -16,5 +16,14 @@ describe('client safety utilities', () => {
   it('routes assigned action deep links to their rendered source object', () => {
     const requirement = { decisions: [], history: [], reviewItems: [{ id: 'review-1' }], comments: [], patches: [], actionItems: [{ id: 'task-1', sourceType: 'review-item', sourceId: 'review-1' }] } as unknown as RequirementView
     expect(resolveDeepLinkTarget(requirement, 'tasks', 'task-1')).toMatchObject({ primaryMode: 'tasks', taskView: 'review', focusObjectId: 'review-1', reviewObjectId: 'review-1' })
+  })
+  it('matches complete mention names without notifying nickname prefixes', () => {
+    const people = [{ participantId: 'participant-ann', nickname: 'Ann', role: 'product', kind: 'human' }, { participantId: 'participant-anna', nickname: 'Anna', role: 'product', kind: 'human' }] as ParticipantSnapshot[]
+    expect(mentionedParticipantIds('请 @Anna 看一下', people)).toEqual(['participant-anna'])
+  })
+  it('preserves per-row sources, external refs, and quoted multiline CSV bodies', () => {
+    const parsed = parseInsightFile('feedback.csv', 'body,customer,customer_ref,company,company_ref,source,source_url\n"第一行\n第二行",客户甲,C-1,公司甲,CO-1,访谈,https://example.com/interview')
+    expect(parsed.errors).toEqual([])
+    expect(parsed.rows[0]).toMatchObject({ body: '第一行\n第二行', customerRef: 'C-1', companyRef: 'CO-1', source: '访谈', sourceUrl: 'https://example.com/interview' })
   })
 })

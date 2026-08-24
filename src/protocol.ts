@@ -77,6 +77,10 @@ export interface RequirementMetrics {
   openReviewCount: number; openCommentCount: number; pendingActionCount: number; activeDecisionCount: number; riskCount: number
   insightCount: number; customerImportanceScore: number; customerCount: number; companyCount: number; anonymousInsightCount: number
 }
+export interface RequirementSummary {
+  id: string; title: string; stage: RequirementStage; currentCommit: string; workspaceId?: string; archivedAt?: number; updatedAt: number
+  metrics: RequirementMetrics; participantIds: string[]
+}
 export interface StructuredDiffLine { type: 'context' | 'added' | 'removed'; oldLine?: number; newLine?: number; text: string }
 export interface StructuredDiffHunk { id: string; oldStart: number; newStart: number; lines: StructuredDiffLine[]; collapsedBefore: number; collapsedAfter: number; collapsedBeforeLines: StructuredDiffLine[]; collapsedAfterLines: StructuredDiffLine[] }
 export interface StructuredDiff { baseLabel: string; headLabel: string; added: number; removed: number; hunks: StructuredDiffHunk[] }
@@ -134,7 +138,7 @@ export type CollaborationAction =
   | { kind: 'insight.delete'; participant: ParticipantSnapshot; requirementId: string; insightId: string }
   | { kind: 'insight.link'; participant: ParticipantSnapshot; requirementId: string; insightId: string; link: Pick<InsightLink, 'requirementId' | 'targetType' | 'targetId'> }
   | { kind: 'insight.unlink'; participant: ParticipantSnapshot; requirementId: string; linkId: string }
-  | { kind: 'insight.import'; participant: ParticipantSnapshot; requirementId: string; source?: Omit<FeedbackSource, 'createdAt' | 'updatedAt'>; companies?: Array<Omit<Company, 'createdAt' | 'updatedAt'>>; customers?: Array<Omit<Customer, 'createdAt' | 'updatedAt'>>; rows: Array<Omit<Insight, 'dedupeHash' | 'createdBy' | 'createdAt' | 'updatedAt'>>; links?: Array<{ insightId: string } & Pick<InsightLink, 'requirementId' | 'targetType' | 'targetId'>> }
+  | { kind: 'insight.import'; participant: ParticipantSnapshot; requirementId: string; source?: Omit<FeedbackSource, 'createdAt' | 'updatedAt'>; sources?: Array<Omit<FeedbackSource, 'createdAt' | 'updatedAt'>>; companies?: Array<Omit<Company, 'createdAt' | 'updatedAt'>>; customers?: Array<Omit<Customer, 'createdAt' | 'updatedAt'>>; rows: Array<Omit<Insight, 'dedupeHash' | 'createdBy' | 'createdAt' | 'updatedAt'>>; links?: Array<{ insightId: string } & Pick<InsightLink, 'requirementId' | 'targetType' | 'targetId'>> }
 
 export interface ActionEnvelope { requestId: string; action: CollaborationAction }
 export type ActionResult = { ok: true; revision: number; requirement: RequirementView; deletedRequirementId?: string } | { ok: false; revision: number; error: string; conflict?: SaveConflict }

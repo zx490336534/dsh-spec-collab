@@ -52,6 +52,29 @@ describe('CollaborationEngine', () => {
     expect(existsSync(eventPath)).toBe(false)
   })
 
+  it('blocks structurally corrupted but valid JSON ledgers instead of normalizing them to empty data', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spec-engine-'))
+    const legacyPath = join(dir, 'collaboration-v2.json')
+    writeFileSync(legacyPath, JSON.stringify({ schemaVersion: 2, revision: 1, requirements: { lost: true }, participants: [] }))
+    expect(() => new CollaborationEngine(join(dir, 'collaboration-v3.json'), new GitRequirementStore(join(dir, 'repo-v2')), { legacyPath })).toThrow('invalid collaboration v2 ledger')
+
+    const eventPath = join(dir, 'broken-v3.json')
+    writeFileSync(eventPath, JSON.stringify({ schemaVersion: 3, revision: 1, participants: [], requirements: [] }))
+    expect(() => new CollaborationEngine(eventPath, new GitRequirementStore(join(dir, 'repo-v3')))).toThrow('invalid collaboration v3 ledger')
+    expect(readFileSync(eventPath, 'utf8')).toContain('"schemaVersion":3')
+  })
+
+  it('recovers a durable pending ledger transaction after Git advanced', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spec-engine-')); const eventPath = join(dir, 'collaboration-v3.json'); const store = new GitRequirementStore(join(dir, 'repo'))
+    const engine = new CollaborationEngine(eventPath, store); engine.setCoordinator(coordinator); const view = create(engine)
+    const pending = engine.snapshot(); pending.revision += 1; pending.requirements[0]!.title = '从事务恢复的标题'
+    writeFileSync(`${eventPath}.pending`, JSON.stringify(pending)); writeFileSync(eventPath, '{broken')
+    const recovered = new CollaborationEngine(eventPath, store)
+    expect(recovered.view(view.id).title).toBe('从事务恢复的标题')
+    expect(existsSync(`${eventPath}.pending`)).toBe(false)
+    expect(JSON.parse(readFileSync(eventPath, 'utf8'))).toMatchObject({ revision: pending.revision })
+  })
+
   it('loads collaboration state written before participant bindings existed', () => {
     const dir = mkdtempSync(join(tmpdir(), 'spec-engine-'))
     const eventPath = join(dir, 'events.json')
@@ -79,6 +102,16 @@ describe('CollaborationEngine', () => {
     expect(missing).toMatchObject({ ok: false, error: 'review workspace is required' })
     const created = engine.apply('with-group', { kind: 'requirement.create', participant: product, title: '退款', rawRequirement: '支持部分退款。', sources: [], workspaceId: 'workspace-payments' })
     expect(created.ok && created.requirement.workspaceId).toBe('workspace-payments')
+  })
+
+  it('builds compact requirement summaries without full document or collaboration payloads', () => {
+    const engine = setup(); const view = create(engine)
+    const summary = engine.summaries()[0]!
+    expect(summary).toMatchObject({ id: view.id, title: view.title, currentCommit: view.currentCommit, participantIds: [product.participantId] })
+    expect(summary.metrics).toMatchObject({ openReviewCount: 0, insightCount: 0 })
+    expect(summary).not.toHaveProperty('version')
+    expect(summary).not.toHaveProperty('reviewItems')
+    expect(summary).not.toHaveProperty('comments')
   })
 
   it('allows a legacy requirement to bind one workspace exactly once', () => {
@@ -207,6 +240,50 @@ describe('CollaborationEngine', () => {
     expect(failed).toMatchObject({ ok: false, error: 'feedback source not found' })
     expect(engine.insights({ requirementId: view.id }).total).toBe(1)
     expect(engine.snapshot().feedbackSources).toHaveLength(1)
+  })
+
+  it('keeps failed insight writes out of memory and strips private customer fields', () => {
+    const engine = setup(); const view = create(engine)
+    engine.apply('privacy-company', { kind: 'company.upsert', participant: product, requirementId: view.id, company: { id: 'company-safe', name: '安全公司' } })
+    const unsafeCustomer = { id: 'customer-safe', displayName: '客户甲', companyId: 'company-safe', email: 'secret@example.com', phone: '13000000000' }
+    expect(engine.apply('privacy-customer', { kind: 'customer.upsert', participant: product, requirementId: view.id, customer: unsafeCustomer as never }).ok).toBe(true)
+    expect(engine.snapshot().customers[0]).toEqual(expect.not.objectContaining({ email: expect.anything(), phone: expect.anything() }))
+    engine.apply('safe-source', { kind: 'source.upsert', participant: product, requirementId: view.id, source: { id: 'source-safe', kind: 'text', label: '访谈', accessStatus: 'available' } })
+    engine.apply('safe-insight', { kind: 'insight.create', participant: product, requirementId: view.id, insight: { id: 'insight-safe', sourceId: 'source-safe', title: '标题', body: '正文', importance: 'want', capturedAt: 1 } })
+    const failed = engine.apply('bad-update', { kind: 'insight.update', participant: product, requirementId: view.id, insightId: 'insight-safe', changes: { sourceId: 'missing-source' } })
+    expect(failed).toMatchObject({ ok: false, error: 'feedback source not found' })
+    expect(engine.snapshot().insights[0]?.sourceId).toBe('source-safe')
+  })
+
+  it('invalidates a stale Ready package and other pending patches after accepting a patch', () => {
+    const engine = setup(); const view = create(engine)
+    const record = (engine as unknown as { state: { requirements: Array<Record<string, unknown>> } }).state.requirements[0]!
+    record.stage = 'ready'
+    record.readyPackage = { requirementId: view.id, commit: view.currentCommit, packageHash: 'old', generatedAt: 1, generatedBy: product, markdown: '旧交付包' }
+    engine.submitPatch({ requirementId: view.id, baseCommit: view.currentCommit, reviewKind: 'change-review', ai, proposedMarkdown: `${view.version.markdown}\n补丁一`, summary: '补丁一内容', affectedReviewItemIds: [], affectedSections: [], affectedAcceptanceIds: [] })
+    engine.submitPatch({ requirementId: view.id, baseCommit: view.currentCommit, reviewKind: 'change-review', ai, proposedMarkdown: `${view.version.markdown}\n补丁二`, summary: '补丁二内容', affectedReviewItemIds: [], affectedSections: [], affectedAcceptanceIds: [] })
+    const patches = engine.view(view.id).patches
+    const accepted = engine.apply('accept-first-ready-patch', { kind: 'patch.accept', participant: product, requirementId: view.id, patchId: patches[0]!.id, summary: '接受第一包补丁' })
+    if (!accepted.ok) throw new Error(accepted.error)
+    expect(accepted.requirement.readyPackage).toBeUndefined()
+    expect(accepted.requirement.stage).toBe('joint-review')
+    expect(accepted.requirement.patches.map(item => item.status)).toEqual(['accepted', 'stale'])
+  })
+
+  it('records a delayed AI result against the stage where it was requested', async () => {
+    let release: ((sessionId: string) => void) | undefined
+    const delayed: AiCoordinator = {
+      requestReview: () => new Promise(resolve => { release = resolve }),
+      requestCommentReply: async () => 'comment-session',
+    }
+    const engine = setup(); engine.setCoordinator(delayed)
+    const view = create(engine)
+    const record = (engine as unknown as { state: { requirements: Array<{ stage: string; stageCycle: number }> } }).state.requirements[0]!
+    record.stage = 'product-confirmation'; record.stageCycle = 1
+    release?.('old-stage-session')
+    await Promise.resolve(); await Promise.resolve()
+    expect(engine.view(view.id).aiConversations).toContainEqual(expect.objectContaining({ stage: 'product-review', stageCycle: 0, sessionId: 'old-stage-session' }))
+    expect(engine.view(view.id).aiConversations).not.toContainEqual(expect.objectContaining({ stage: 'product-confirmation', stageCycle: 1, sessionId: 'old-stage-session' }))
   })
 
   it('restores historical content by creating a new commit', () => {

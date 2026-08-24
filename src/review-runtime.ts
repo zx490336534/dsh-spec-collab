@@ -73,14 +73,15 @@ export class DshReviewCoordinator implements AiCoordinator {
   private async inStageSession(requirement: RequirementView, existingSessionId: string | undefined, continuation: string, launch: () => Promise<string>): Promise<string> {
     const key = `${requirement.id}:${requirement.stage}:${requirement.stageCycle}`
     if (existingSessionId !== undefined) {
-      const session = Promise.resolve(existingSessionId); this.stageSessions.set(key, session)
+      this.rememberStageSession(key, Promise.resolve(existingSessionId))
       await this.promptExisting(existingSessionId, continuation); return existingSessionId
     }
     const pending = this.stageSessions.get(key)
     if (pending !== undefined) { const sessionId = await pending; await this.promptExisting(sessionId, continuation); return sessionId }
-    const created = launch(); this.stageSessions.set(key, created)
+    const created = launch(); this.rememberStageSession(key, created)
     try { return await created } catch (error) { if (this.stageSessions.get(key) === created) this.stageSessions.delete(key); throw error }
   }
+  private rememberStageSession(key: string, session: Promise<string>): void { this.stageSessions.delete(key); this.stageSessions.set(key, session); while (this.stageSessions.size > 100) { const oldest = this.stageSessions.keys().next().value as string | undefined; if (oldest === undefined) break; this.stageSessions.delete(oldest) } }
   private async promptExisting(sessionId: string, promptText: string): Promise<void> {
     const prompted = await this.api.sessions.prompt(request({ sessionId: sessionId as never, mode: 'queue' as const, content: [{ type: 'text' as const, text: promptText }] }))
     if (!prompted.result.ok) throw failure(prompted.result.error)

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ParticipantSnapshot, RequirementVersion, SourceReference } from './protocol.ts'
 
@@ -23,11 +23,18 @@ export class GitRequirementStore {
     const requirementId = `${slug(input.title)}-${randomUUID().slice(0, 8)}`
     const markdown = initialSpec(input.title, input.rawRequirement, input.sources)
     const path = this.specPath(requirementId)
-    mkdirSync(dirname(path), { recursive: true })
-    writeFileSync(path, markdown, 'utf8')
-    const commit = this.commit(requirementId, input.participant, 'Create requirement')
-    const version = this.rememberCommittedVersion(requirementId, commit, markdown, input.participant, 'Create requirement')
-    return { requirementId, version }
+    try {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, markdown, 'utf8')
+      const commit = this.commit(requirementId, input.participant, 'Create requirement')
+      const version = this.rememberCommittedVersion(requirementId, commit, markdown, input.participant, 'Create requirement')
+      return { requirementId, version }
+    }
+    catch (error) {
+      this.git(['reset', '--', this.relativeSpecPath(requirementId)], true)
+      rmSync(dirname(path), { recursive: true, force: true })
+      throw error
+    }
   }
 
   save(input: SaveVersionInput): RequirementVersion {
@@ -38,10 +45,18 @@ export class GitRequirementStore {
     if (input.summary.trim() === '') throw new Error('change summary is required')
     if (input.markdown.length > 2_000_000) throw new Error('spec exceeds 2 MB')
     if (input.markdown === onDisk) throw new Error('no changes to save')
-    writeFileSync(this.specPath(input.requirementId), input.markdown, 'utf8')
-    this.git(['add', this.relativeSpecPath(input.requirementId)])
-    const commit = this.commitStaged(input.participant, input.summary.trim())
-    return this.rememberCommittedVersion(input.requirementId, commit, input.markdown, input.participant, input.summary.trim(), current)
+    const relativePath = this.relativeSpecPath(input.requirementId)
+    try {
+      writeFileSync(this.specPath(input.requirementId), input.markdown, 'utf8')
+      this.git(['add', relativePath])
+      const commit = this.commitStaged(input.participant, input.summary.trim())
+      return this.rememberCommittedVersion(input.requirementId, commit, input.markdown, input.participant, input.summary.trim(), current)
+    }
+    catch (error) {
+      writeFileSync(this.specPath(input.requirementId), onDisk, 'utf8')
+      this.git(['reset', '--', relativePath], true)
+      throw error
+    }
   }
 
   read(requirementId: string, commit?: string): RequirementVersion {
@@ -103,15 +118,21 @@ export class GitRequirementStore {
     const scp = /^git@([^:]+):(.+)$/.exec(origin)
     const normalized = scp ? `https://${scp[1]}/${scp[2]}` : origin.replace(/^ssh:\/\/git@/, 'https://')
     if (!/^https?:\/\//.test(normalized)) { this.commitBaseUrl = null; return undefined }
-    this.commitBaseUrl = normalized.replace(/\.git$/, '').replace(/\/$/, '')
+    try {
+      const url = new URL(normalized)
+      url.username = ''; url.password = ''
+      this.commitBaseUrl = url.toString().replace(/\.git$/, '').replace(/\/$/, '')
+    }
+    catch { this.commitBaseUrl = null; return undefined }
     return `${this.commitBaseUrl}/commit/${commit}`
   }
 
   remove(requirementId: string, participant: ParticipantSnapshot): void {
     assertRequirementId(requirementId)
     if (!existsSync(this.specPath(requirementId))) throw new Error('requirement spec not found')
-    this.git(['rm', '-r', `requirements/${requirementId}`])
-    this.commitStaged(participant, 'Delete requirement')
+    const relativeDirectory = `requirements/${requirementId}`
+    try { this.git(['rm', '-r', relativeDirectory]); this.commitStaged(participant, 'Delete requirement') }
+    catch (error) { this.git(['restore', '--staged', '--worktree', relativeDirectory], true); throw error }
     this.headCache.delete(requirementId); this.historyCache.delete(requirementId)
     for (const key of this.versionCache.keys()) if (key.startsWith(`${requirementId}:`)) this.versionCache.delete(key)
   }

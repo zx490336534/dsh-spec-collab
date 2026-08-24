@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join } from 'node:path'
 import { GitRequirementStore, VersionConflictError } from './git-store.ts'
-import { SCHEMA_VERSION, type ActionItem, type ActionResult, type AiReviewRun, type CandidatePatch, type CollaborationAction, type CollaborationEvent, type CollaborationState, type CommentThread, type FeedbackSource, type Insight, type InsightImportance, type InsightLink, type MyActionItem, type MyItemCategory, type Notification, type ParticipantSnapshot, type ReadinessCheck, type RequirementMetrics, type RequirementRecord, type RequirementVersion, type RequirementView, type ReviewItem, type ReviewKind, type SaveConflict, type StructuredDiff } from './protocol.ts'
+import { SCHEMA_VERSION, type ActionItem, type ActionResult, type AiReviewRun, type CandidatePatch, type CollaborationAction, type CollaborationEvent, type CollaborationState, type CommentThread, type FeedbackSource, type Insight, type InsightImportance, type InsightLink, type MyActionItem, type MyItemCategory, type Notification, type ParticipantSnapshot, type ReadinessCheck, type RequirementMetrics, type RequirementRecord, type RequirementSummary, type RequirementVersion, type RequirementView, type ReviewItem, type ReviewKind, type SaveConflict, type StructuredDiff } from './protocol.ts'
 import { buildStructuredDiff } from './structured-diff.ts'
 
 export interface AiCoordinator {
@@ -28,8 +28,10 @@ export class CollaborationEngine {
   directory(): ParticipantSnapshot[] { return structuredClone(this.state.participants).sort((left, right) => left.nickname.localeCompare(right.nickname, 'zh-CN')) }
   notifications(participantId: string, page = 1, pageSize = 50): { items: Notification[]; total: number; unread: number } {
     const rows = this.state.notifications.filter(item => item.recipientParticipantId === participantId).sort((left, right) => right.createdAt - left.createdAt)
-    const start = Math.max(0, page - 1) * Math.min(100, Math.max(1, pageSize))
-    return { items: structuredClone(rows.slice(start, start + pageSize)), total: rows.length, unread: rows.filter(item => item.readAt === undefined).length }
+    const safePage = Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1
+    const safePageSize = Number.isFinite(pageSize) ? Math.min(100, Math.max(1, Math.trunc(pageSize))) : 50
+    const start = (safePage - 1) * safePageSize
+    return { items: structuredClone(rows.slice(start, start + safePageSize)), total: rows.length, unread: rows.filter(item => item.readAt === undefined).length }
   }
   insights(query: { requirementId?: string; customerId?: string; companyId?: string; sourceId?: string; importance?: InsightImportance; page?: number; pageSize?: number } = {}): { items: Insight[]; total: number; links: CollaborationState['insightLinks']; customers: CollaborationState['customers']; companies: CollaborationState['companies']; sources: CollaborationState['feedbackSources'] } {
     const linkedIds = query.requirementId === undefined ? undefined : new Set(this.state.insightLinks.filter(link => link.requirementId === query.requirementId).map(link => link.insightId))
@@ -40,6 +42,19 @@ export class CollaborationEngine {
   }
   subscribe(listener: (event: CollaborationEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   list(): RequirementView[] { return this.state.requirements.map(item => this.view(item.id)) }
+  summaries(): RequirementSummary[] {
+    return this.state.requirements.map(record => ({
+      id: record.id,
+      title: record.title,
+      stage: record.stage,
+      currentCommit: record.currentCommit,
+      ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+      ...(record.archivedAt ? { archivedAt: record.archivedAt } : {}),
+      updatedAt: record.updatedAt,
+      metrics: requirementMetrics(record, this.state),
+      participantIds: requirementParticipantIds(record, this.versions.history(record.id)),
+    }))
+  }
   version(requirementId: string, commit: string): RequirementVersion {
     const record = this.record(requirementId)
     if (!this.versions.history(record.id).some(version => version.commit === commit)) throw new Error('requirement version not found')
@@ -78,6 +93,7 @@ export class CollaborationEngine {
     const cached = this.seen.get(requestId)
     if (cached !== undefined) return structuredClone(cached)
     let result: EngineResult
+    const beforeState = structuredClone(this.state)
     const previousEventContext = this.eventContext
     this.eventContext = eventForAction(action)
     try {
@@ -92,6 +108,7 @@ export class CollaborationEngine {
       }
     }
     catch (error) {
+      this.state = beforeState
       const conflict = error instanceof VersionConflictError && action.kind === 'version.save' ? this.saveConflict(action) : undefined
       result = { ok: false, revision: this.state.revision, error: error instanceof Error ? error.message : String(error), ...(conflict === undefined ? {} : { conflict }) }
     }
@@ -156,7 +173,7 @@ export class CollaborationEngine {
       if (workspaceId === undefined || workspaceId === '') throw new Error('review workspace is required')
       const created = this.versions.create({ title, rawRequirement: action.rawRequirement, sources: action.sources, participant: action.participant })
       const record: RequirementRecord = { id: created.requirementId, title, stage: 'product-review', stageCycle: 0, currentCommit: created.version.commit, workspaceId, sources: action.sources, reviewItems: [], comments: [], patches: [], decisions: [], confirmations: [], actionItems: [], aiRuns: [], aiConversations: [], createdAt: now, updatedAt: now }
-      this.state.requirements.unshift(record); this.persist()
+      this.state.requirements.unshift(record); this.persist(undefined, true)
       this.enqueueReview(record, action.participant, 'product-first')
       return { ok: true, revision: this.state.revision, requirement: this.view(record.id) }
     }
@@ -176,7 +193,7 @@ export class CollaborationEngine {
       const markdown = /^# .+$/m.test(before) ? before.replace(/^# .+$/m, `# ${title}`) : `# ${title}\n\n${before}`
       const version = this.versions.save({ requirementId: record.id, baseCommit: record.currentCommit, markdown, participant: action.participant, summary: `Rename requirement: ${title}` })
       record.title = title; record.currentCommit = version.commit; record.updatedAt = now
-      invalidateAffected(record, [], []); this.persist(); this.enqueueReview(record, action.participant, 'change-review')
+      invalidateAffected(record, [], []); this.persist(undefined, true); this.enqueueReview(record, action.participant, 'change-review')
     } else if (action.kind === 'requirement.archive' || action.kind === 'requirement.unarchive') {
       requireHuman(action.participant)
       if (action.kind === 'requirement.archive' && action.archived) record.archivedAt = now
@@ -187,7 +204,8 @@ export class CollaborationEngine {
       const deleted = this.view(record.id)
       this.versions.remove(record.id, action.participant)
       this.state.requirements.splice(this.state.requirements.indexOf(record), 1)
-      this.persist()
+      this.state.insightLinks = this.state.insightLinks.filter(item => item.requirementId !== record.id)
+      this.persist(undefined, true)
       return { ok: true, revision: this.state.revision, requirement: deleted, deletedRequirementId: record.id }
     } else if (action.kind === 'version.save') {
       requireHuman(action.participant)
@@ -198,7 +216,7 @@ export class CollaborationEngine {
       invalidateAffected(record, impact.sections, impact.acceptanceIds, action.markdown)
       record.patches.filter(item => item.status === 'pending').forEach(item => { item.status = 'stale' })
       if (record.stage === 'ready') enterStage(record, 'joint-review')
-      this.persist()
+      this.persist(undefined, true)
       this.enqueueReview(record, action.participant, 'change-review')
     } else if (action.kind === 'version.restore') {
       requireHuman(action.participant)
@@ -211,7 +229,7 @@ export class CollaborationEngine {
       invalidateAffected(record, impact.sections, impact.acceptanceIds, historical.markdown)
       record.patches.filter(item => item.status === 'pending').forEach(item => { item.status = 'stale' })
       if (record.stage === 'ready') enterStage(record, 'joint-review')
-      this.persist(); this.enqueueReview(record, action.participant, 'change-review')
+      this.persist(undefined, true); this.enqueueReview(record, action.participant, 'change-review')
     } else if (action.kind === 'review.request') {
       requireHuman(action.participant)
       this.enqueueReview(record, action.participant, action.reviewKind)
@@ -238,9 +256,10 @@ export class CollaborationEngine {
       const coordinator = this.coordinator
       if (coordinator !== undefined) {
         const view = this.view(record.id)
-        const existingSession = record.aiConversations.find(item => item.stage === record.stage && item.stageCycle === record.stageCycle)?.sessionId
+        const requestedStage = record.stage; const requestedStageCycle = record.stageCycle
+        const existingSession = record.aiConversations.find(item => item.stage === requestedStage && item.stageCycle === requestedStageCycle)?.sessionId
         void coordinator.requestCommentReply({ requirement: view, comment, ...(existingSession ? { sessionId: existingSession } : {}) }).then(sessionId => {
-          comment.aiStatus = 'running'; comment.aiSessionId = sessionId; comment.updatedAt = Date.now(); this.rememberStageConversation(record, sessionId); this.persist({ types: ['ai.status', 'comment.changed', 'metrics.changed'], requirementId: record.id, objectId: comment.id })
+          comment.aiStatus = 'running'; comment.aiSessionId = sessionId; comment.updatedAt = Date.now(); this.rememberStageConversation(record, sessionId, requestedStage, requestedStageCycle); this.persist({ types: ['ai.status', 'comment.changed', 'metrics.changed'], requirementId: record.id, objectId: comment.id })
         }, error => this.markAiFailure(record.id, comment.id, error instanceof Error ? error.message : String(error)))
       }
     } else if (action.kind === 'comment.reply') {
@@ -273,10 +292,12 @@ export class CollaborationEngine {
       const version = this.versions.save({ requirementId: record.id, baseCommit: patch.baseCommit, markdown: patch.proposedMarkdown, participant: action.participant, summary: action.summary })
       const before = this.versions.read(record.id, record.currentCommit).markdown
       const impact = changedScopes(before, patch.proposedMarkdown)
-      record.currentCommit = version.commit; patch.status = 'accepted'; record.updatedAt = now
+      record.currentCommit = version.commit; patch.status = 'accepted'; record.updatedAt = now; delete record.readyPackage
+      record.patches.filter(item => item.id !== patch.id && item.status === 'pending').forEach(item => { item.status = 'stale' })
+      if (record.stage === 'ready') enterStage(record, 'joint-review')
       for (const id of patch.affectedReviewItemIds) { const item = record.reviewItems.find(candidate => candidate.id === id); if (item !== undefined) { item.status = 'resolved'; item.updatedAt = now } }
       invalidateAffected(record, impact.sections, impact.acceptanceIds, patch.proposedMarkdown)
-      record.actionItems.filter(task => task.sourceId === patch.id && task.status === 'pending').forEach(task => { task.status = 'handled'; task.updatedAt = now }); this.persist()
+      record.actionItems.filter(task => task.sourceId === patch.id && task.status === 'pending').forEach(task => { task.status = 'handled'; task.updatedAt = now }); this.persist(undefined, true)
       this.enqueueReview(record, action.participant, 'change-review')
     } else if (action.kind === 'patch.reject') {
       requireHuman(action.participant)
@@ -325,21 +346,20 @@ export class CollaborationEngine {
       this.persist()
     } else if (action.kind === 'source.upsert') {
       requireHuman(action.participant)
-      const input = action.source; const existing = this.state.feedbackSources.find(item => item.id === input.id)
+      const input = cleanSource(action.source); const existing = this.state.feedbackSources.find(item => item.id === input.id)
       const source: FeedbackSource = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now }
-      if (source.label.trim() === '' || (source.kind === 'url' && !safeHttpUrl(source.url))) throw new Error('valid source label and http(s) URL are required')
+      validateSource(source)
       if (existing === undefined) this.state.feedbackSources.push(source); else Object.assign(existing, source)
       this.persist()
     } else if (action.kind === 'company.upsert') {
       requireHuman(action.participant)
-      const input = action.company; if (input.id.trim() === '' || input.name.trim() === '') throw new Error('company id and name are required')
+      const input = cleanCompany(action.company); validateCompany(input)
       const existing = this.state.companies.find(item => item.id === input.id); const company = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now }
       if (existing === undefined) this.state.companies.push(company); else Object.assign(existing, company)
       this.persist()
     } else if (action.kind === 'customer.upsert') {
       requireHuman(action.participant)
-      const input = action.customer; if (input.id.trim() === '' || input.displayName.trim() === '') throw new Error('customer id and display name are required')
-      if (input.companyId !== undefined && !this.state.companies.some(item => item.id === input.companyId)) throw new Error('company not found')
+      const input = cleanCustomer(action.customer); validateCustomer(input, this.state)
       const existing = this.state.customers.find(item => item.id === input.id); const customer = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now }
       if (existing === undefined) this.state.customers.push(customer); else Object.assign(existing, customer)
       this.persist()
@@ -368,9 +388,9 @@ export class CollaborationEngine {
       if (action.rows.length > 2_000 || Buffer.byteLength(JSON.stringify(action.rows), 'utf8') > 5 * 1024 * 1024) throw new Error('insight import exceeds 2,000 rows or 5 MB')
       const before = structuredClone(this.state)
       try {
-        if (action.source) { const existing = this.state.feedbackSources.find(item => item.id === action.source!.id); if (existing) Object.assign(existing, action.source, { updatedAt: now }); else this.state.feedbackSources.push({ ...action.source, createdAt: now, updatedAt: now }) }
-        for (const company of action.companies ?? []) if (!this.state.companies.some(item => item.id === company.id)) this.state.companies.push({ ...company, createdAt: now, updatedAt: now })
-        for (const customer of action.customers ?? []) if (!this.state.customers.some(item => item.id === customer.id)) this.state.customers.push({ ...customer, createdAt: now, updatedAt: now })
+        for (const row of [...(action.source ? [action.source] : []), ...(action.sources ?? [])]) { const source = { ...cleanSource(row), createdAt: now, updatedAt: now }; validateSource(source); const existing = this.state.feedbackSources.find(item => item.id === source.id); if (existing) Object.assign(existing, source, { createdAt: existing.createdAt }); else this.state.feedbackSources.push(source) }
+        for (const row of action.companies ?? []) { const company = cleanCompany(row); validateCompany(company); const existing = this.state.companies.find(item => item.id === company.id); if (existing) Object.assign(existing, company, { createdAt: existing.createdAt, updatedAt: now }); else this.state.companies.push({ ...company, createdAt: now, updatedAt: now }) }
+        for (const row of action.customers ?? []) { const customer = cleanCustomer(row); validateCustomer(customer, this.state); const existing = this.state.customers.find(item => item.id === customer.id); if (existing) Object.assign(existing, customer, { createdAt: existing.createdAt, updatedAt: now }); else this.state.customers.push({ ...customer, createdAt: now, updatedAt: now }) }
         const actualIds = new Map<string, string>()
         for (const row of action.rows) actualIds.set(row.id, this.createInsight(record.id, row, action.participant, now).id)
         for (const link of action.links ?? []) this.addInsightLink(actualIds.get(link.insightId) ?? link.insightId, link, action.participant, now)
@@ -410,19 +430,20 @@ export class CollaborationEngine {
   private addInsightLink(insightId: string, link: Pick<InsightLink, 'requirementId' | 'targetType' | 'targetId'>, participant: ParticipantSnapshot, now: number): void {
     if (!this.state.insights.some(item => item.id === insightId)) throw new Error('insight not found')
     this.record(link.requirementId)
+    if (!['requirement', 'section', 'acceptance-criterion'].includes(link.targetType)) throw new Error('invalid insight link target type')
     if (link.targetType !== 'requirement' && !link.targetId?.trim()) throw new Error('linked section or acceptance criterion id is required')
     const duplicate = this.state.insightLinks.some(item => item.insightId === insightId && item.requirementId === link.requirementId && item.targetType === link.targetType && item.targetId === link.targetId)
     if (!duplicate) this.state.insightLinks.push({ id: randomUUID(), insightId, ...link, createdBy: participant, createdAt: now })
   }
 
-  private rememberStageConversation(record: RequirementRecord, sessionId: string): void {
-    const now = Date.now(); const existing = record.aiConversations.find(item => item.stage === record.stage && item.stageCycle === record.stageCycle)
-    if (existing) { existing.sessionId = sessionId; existing.updatedAt = now } else record.aiConversations.push({ stage: record.stage, stageCycle: record.stageCycle, sessionId, createdAt: now, updatedAt: now })
+  private rememberStageConversation(record: RequirementRecord, sessionId: string, stage = record.stage, stageCycle = record.stageCycle): void {
+    const now = Date.now(); const existing = record.aiConversations.find(item => item.stage === stage && item.stageCycle === stageCycle)
+    if (existing) { existing.sessionId = sessionId; existing.updatedAt = now } else record.aiConversations.push({ stage, stageCycle, sessionId, createdAt: now, updatedAt: now })
   }
 
   private notify(recipientParticipantId: string, kind: Notification['kind'], record: RequirementRecord, objectType: Notification['objectType'], objectId: string, message: string): void {
     if (!this.state.participants.some(item => item.participantId === recipientParticipantId)) return
-    const deepLink = `#spec-collab/${encodeURIComponent(record.id)}/${objectType === 'comment' ? 'discussion' : 'tasks'}/${encodeURIComponent(objectId)}`
+    const deepLink = `#spec-collab/${encodeURIComponent(record.id)}/${objectType === 'comment' ? 'discussion' : 'tasks'}/${encodeURIComponent(objectId)}?commit=${encodeURIComponent(record.currentCommit)}`
     this.state.notifications.push({ id: randomUUID(), recipientParticipantId, kind, requirementId: record.id, objectType, objectId, message, deepLink, createdAt: Date.now() })
   }
 
@@ -441,21 +462,31 @@ export class CollaborationEngine {
     const coordinator = this.coordinator
     if (coordinator === undefined) { this.markAiFailure(record.id, run.id, 'AI coordinator unavailable'); return }
     const view = this.view(record.id)
-    const existingSession = record.aiConversations.find(item => item.stage === record.stage && item.stageCycle === record.stageCycle)?.sessionId
+    const requestedStage = record.stage; const requestedStageCycle = record.stageCycle
+    const existingSession = record.aiConversations.find(item => item.stage === requestedStage && item.stageCycle === requestedStageCycle)?.sessionId
     void coordinator.requestReview({ requirement: view, run, ...(existingSession ? { sessionId: existingSession } : {}) }).then(sessionId => {
-      run.status = 'running'; run.sessionId = sessionId; run.updatedAt = Date.now(); this.rememberStageConversation(record, sessionId); this.persist({ types: ['ai.status', 'metrics.changed'], requirementId: record.id, objectId: run.id })
+      run.status = 'running'; run.sessionId = sessionId; run.updatedAt = Date.now(); this.rememberStageConversation(record, sessionId, requestedStage, requestedStageCycle); this.persist({ types: ['ai.status', 'metrics.changed'], requirementId: record.id, objectId: run.id })
     }, error => this.markAiFailure(record.id, run.id, error instanceof Error ? error.message : String(error)))
   }
 
   private record(id: string): RequirementRecord { const value = this.state.requirements.find(item => item.id === id); if (value === undefined) throw new Error('requirement not found'); return value }
   private comment(record: RequirementRecord, id: string): CommentThread { const value = record.comments.find(item => item.id === id); if (value === undefined) throw new Error('comment not found'); return value }
-  private persist(event = this.eventContext ?? { types: ['metrics.changed'] as const }): void {
+  private persist(event = this.eventContext ?? { types: ['metrics.changed'] as const }, recoverable = false): void {
     this.state.revision += 1
-    atomicWrite(this.eventPath, this.state)
+    const pendingPath = `${this.eventPath}.pending`
+    if (recoverable) atomicWrite(pendingPath, this.state, true)
+    atomicWrite(this.eventPath, this.state, recoverable)
+    if (recoverable && existsSync(pendingPath)) unlinkSync(pendingPath)
     const payload: CollaborationEvent = { ...event, types: [...event.types], revision: this.state.revision }
     for (const listener of this.listeners) listener(payload)
   }
   private load(): CollaborationState {
+    const pendingPath = `${this.eventPath}.pending`
+    if (existsSync(pendingPath)) {
+      let pending: unknown
+      try { pending = JSON.parse(readFileSync(pendingPath, 'utf8')); validateV3Ledger(pending); atomicWrite(this.eventPath, pending, true); unlinkSync(pendingPath); return normalizeV3(pending) }
+      catch (error) { throw new Error(`pending collaboration transaction is corrupted: ${error instanceof Error ? error.message : String(error)}`) }
+    }
     const sourcePath = existsSync(this.eventPath) ? this.eventPath : this.options.legacyPath !== undefined && existsSync(this.options.legacyPath) ? this.options.legacyPath : undefined
     if (sourcePath === undefined) return emptyState()
     let parsed: unknown
@@ -463,8 +494,9 @@ export class CollaborationEngine {
     catch (error) { throw new Error(`collaboration ledger is corrupted: ${error instanceof Error ? error.message : String(error)}`) }
     if (typeof parsed !== 'object' || parsed === null || typeof (parsed as { schemaVersion?: unknown }).schemaVersion !== 'number') throw new Error('collaboration ledger has no schema version')
     const version = (parsed as { schemaVersion: number }).schemaVersion
-    if (version === SCHEMA_VERSION) return normalizeV3(parsed as CollaborationState)
+    if (version === SCHEMA_VERSION) { validateV3Ledger(parsed); return normalizeV3(parsed as CollaborationState) }
     if (version !== 2) throw new Error(`unsupported collaboration schema: ${version}`)
+    validateV2Ledger(parsed)
     const migrated = migrateV2(parsed as Record<string, unknown>)
     const extension = extname(sourcePath); const stem = basename(sourcePath, extension).replace(/-v2$/, '')
     const backupPath = join(dirname(sourcePath), `${stem}-v2.backup-${Date.now()}${extension || '.json'}`)
@@ -481,11 +513,27 @@ function eventForAction(action: CollaborationAction): Omit<CollaborationEvent, '
     if ((action.mentions?.length ?? 0) > 0) types.add('mention.created')
     types.add('notification.changed')
   }
+  if (action.kind === 'comment.resolve' || action.kind === 'comment.reopen') types.add('notification.changed')
   if (action.kind === 'action.assign') { types.add('assignment.changed'); types.add('notification.changed') }
   if (action.kind === 'notification.mark-read') types.add('notification.changed')
   if (action.kind === 'review.request') types.add('ai.status')
   const requirementId = 'requirementId' in action ? action.requirementId : undefined
   return { types: [...types], ...(requirementId ? { requirementId } : {}) }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
+function validateV2Ledger(value: unknown): asserts value is Record<string, unknown> {
+  if (!isRecord(value) || !Array.isArray(value.requirements) || (value.participants !== undefined && !Array.isArray(value.participants))) throw new Error('invalid collaboration v2 ledger: requirements and participants must be arrays')
+}
+function validateV3Ledger(value: unknown): asserts value is CollaborationState {
+  if (!isRecord(value)) throw new Error('invalid collaboration v3 ledger: object required')
+  const arrays = ['participants', 'requirements', 'companies', 'customers', 'feedbackSources', 'insights', 'insightLinks', 'notifications'] as const
+  if (!Number.isFinite(value.revision) || arrays.some(key => !Array.isArray(value[key]))) throw new Error('invalid collaboration v3 ledger: required collections are missing or invalid')
+  for (const candidate of value.requirements as unknown[]) {
+    if (!isRecord(candidate) || typeof candidate.id !== 'string' || typeof candidate.title !== 'string' || typeof candidate.currentCommit !== 'string' || !['product-review', 'product-confirmation', 'joint-review', 'ready'].includes(String(candidate.stage))) throw new Error('invalid collaboration v3 ledger: malformed requirement')
+    const recordArrays = ['sources', 'reviewItems', 'comments', 'patches', 'decisions', 'confirmations', 'actionItems', 'aiRuns'] as const
+    if (recordArrays.some(key => !Array.isArray(candidate[key])) || (candidate.aiConversations !== undefined && !Array.isArray(candidate.aiConversations))) throw new Error('invalid collaboration v3 ledger: malformed requirement collections')
+  }
 }
 
 function atomicWrite(path: string, value: unknown, durable = false): void {
@@ -558,6 +606,26 @@ function safeHttpUrl(value: string | undefined): boolean {
   try { const url = new URL(value); return url.protocol === 'http:' || url.protocol === 'https:' } catch { return false }
 }
 
+function cleanSource(input: Omit<FeedbackSource, 'createdAt' | 'updatedAt'>): Omit<FeedbackSource, 'createdAt' | 'updatedAt'> {
+  return { id: input.id, kind: input.kind, label: input.label, ...(input.url === undefined ? {} : { url: input.url }), ...(input.externalRef === undefined ? {} : { externalRef: input.externalRef }), accessStatus: input.accessStatus }
+}
+function cleanCompany(input: { id: string; name: string; externalRef?: string }): { id: string; name: string; externalRef?: string } {
+  return { id: input.id, name: input.name, ...(input.externalRef === undefined ? {} : { externalRef: input.externalRef }) }
+}
+function cleanCustomer(input: { id: string; displayName: string; companyId?: string; externalRef?: string }): { id: string; displayName: string; companyId?: string; externalRef?: string } {
+  return { id: input.id, displayName: input.displayName, ...(input.companyId === undefined ? {} : { companyId: input.companyId }), ...(input.externalRef === undefined ? {} : { externalRef: input.externalRef }) }
+}
+function validateSource(source: Pick<FeedbackSource, 'id' | 'kind' | 'label' | 'url' | 'accessStatus'>): void {
+  if (!source.id.trim() || !source.label.trim() || !['text', 'url', 'csv', 'markdown'].includes(source.kind) || !['available', 'unverified', 'missing'].includes(source.accessStatus) || (source.kind === 'url' && !safeHttpUrl(source.url))) throw new Error('valid source id, label and http(s) URL are required')
+}
+function validateCompany(company: Pick<CollaborationState['companies'][number], 'id' | 'name'>): void {
+  if (!company.id.trim() || !company.name.trim()) throw new Error('company id and name are required')
+}
+function validateCustomer(customer: Pick<CollaborationState['customers'][number], 'id' | 'displayName' | 'companyId'>, state: CollaborationState): void {
+  if (!customer.id.trim() || !customer.displayName.trim()) throw new Error('customer id and display name are required')
+  if (customer.companyId !== undefined && !state.companies.some(item => item.id === customer.companyId)) throw new Error('company not found')
+}
+
 function validMentions(values: string[] | undefined, participants: ParticipantSnapshot[]): string[] {
   const registered = new Set(participants.map(item => item.participantId))
   return [...new Set(values ?? [])].filter(value => registered.has(value))
@@ -594,6 +662,17 @@ function requirementMetrics(record: RequirementRecord, state: CollaborationState
     riskCount: record.reviewItems.filter(item => item.commit === record.currentCommit && ['blocking', 'major'].includes(item.severity) && !['resolved', 'invalidated'].includes(item.status)).length,
     insightCount: insights.length, customerImportanceScore: [...entityScores.values()].reduce((sum, value) => sum + value, 0), customerCount: customers.size, companyCount: companies.size, anonymousInsightCount,
   }
+}
+
+function requirementParticipantIds(record: RequirementRecord, history: Array<Omit<RequirementVersion, 'markdown'>>): string[] {
+  return [...new Set([
+    ...history.map(item => item.author.participantId),
+    ...record.reviewItems.flatMap(item => item.response ? [item.response.participant.participantId] : []),
+    ...record.comments.flatMap(item => [item.author.participantId, ...item.replies.map(reply => reply.author.participantId)]),
+    ...record.decisions.map(item => item.confirmer.participantId),
+    ...record.confirmations.map(item => item.participant.participantId),
+    ...record.actionItems.flatMap(item => item.assigneeParticipantId ? [item.assigneeParticipantId] : []),
+  ])]
 }
 
 function sourceParticipantId(record: RequirementRecord, item: ActionItem): string | undefined {

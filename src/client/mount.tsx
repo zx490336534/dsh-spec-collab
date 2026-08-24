@@ -9,6 +9,7 @@ const ACTIVE = 'data-dsh-spec-collab-active'
 const VIEW = '[data-dsh-spec-collab-view]'
 const ACTIVATE_EVENT = 'dsh-panel-activate'
 const CLOSE_EVENT = 'dsh-spec-collab-close'
+const REQUEST_CLOSE_EVENT = 'dsh-spec-collab-request-close'
 const SIDEBAR_COLLAPSED = 'data-sidebar-collapsed'
 
 function isSidebarChromeControl(target: Element | undefined): boolean {
@@ -49,7 +50,8 @@ export function mountSidebarEntry(): () => void {
     const hostCollapsed = document.body.hasAttribute('data-dsh-sidebar-collapsed') || Boolean(row.closest('[data-sidebar-collapsed="true"]'))
     row.toggleAttribute('data-dsh-spec-collab-collapsed', rect.width > 0 ? rect.width < 64 : hostCollapsed)
   }
-  const close = (): void => { document.documentElement.removeAttribute(ACTIVE); row?.classList.remove(css.entryActive!) }
+  const deactivate = (): void => { document.documentElement.removeAttribute(ACTIVE); row?.classList.remove(css.entryActive!) }
+  const requestClose = (): void => { if (document.dispatchEvent(new CustomEvent(REQUEST_CLOSE_EVENT, { cancelable: true }))) deactivate() }
   const openDeepLink = (): void => { if (location.hash.startsWith('#spec-collab/')) { document.documentElement.setAttribute(ACTIVE, ''); row?.classList.add(css.entryActive!) } }
   const closeOnExternalNavigation = (event: MouseEvent): void => {
     if (!document.documentElement.hasAttribute(ACTIVE)) return
@@ -60,14 +62,15 @@ export function mountSidebarEntry(): () => void {
     window.setTimeout(() => {
       if (!document.documentElement.hasAttribute(ACTIVE)) return
       if (document.documentElement.getAttribute(SIDEBAR_COLLAPSED) !== sidebarCollapsedBefore) return
-      close()
+      requestClose()
     }, 0)
   }
   document.addEventListener('click', closeOnExternalNavigation, true)
-  document.addEventListener(CLOSE_EVENT, close)
+  document.addEventListener(CLOSE_EVENT, deactivate)
   window.addEventListener('hashchange', openDeepLink)
   const toggle = (): void => {
     const opening = !document.documentElement.hasAttribute(ACTIVE)
+    if (!opening) { requestClose(); return }
     for (const name of document.documentElement.getAttributeNames()) {
       if (name.startsWith('data-dsh-') && name.endsWith('-active')) document.documentElement.removeAttribute(name)
     }
@@ -99,5 +102,5 @@ export function mountSidebarEntry(): () => void {
   const observer = new MutationObserver(() => { ensure(); syncSidebarState() })
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-dsh-sidebar-collapsed', 'data-sidebar-collapsed'] })
   ensure(); openDeepLink()
-  return () => { observer.disconnect(); resizeObserver?.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, close); window.removeEventListener('hashchange', openDeepLink); close(); row?.remove(); document.querySelector(VIEW)?.remove() }
+  return () => { observer.disconnect(); resizeObserver?.disconnect(); document.removeEventListener('click', closeOnExternalNavigation, true); document.removeEventListener(CLOSE_EVENT, deactivate); window.removeEventListener('hashchange', openDeepLink); deactivate(); row?.remove(); document.querySelector(VIEW)?.remove() }
 }
