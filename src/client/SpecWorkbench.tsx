@@ -55,12 +55,18 @@ type ReviewOpenRequest = { objectId: string; requestId: number }
 type InlineReviewTarget = { itemId: string; sourceKey?: string } & Partial<InlinePopoverPosition>
 type DocumentAnchorFocus = { kind: 'review'; objectId: string; sourceKey?: string } | { kind: 'comment'; objectId: string }
 type PendingNavigation = { kind: 'select'; requirementId: string } | { kind: 'close' } | { kind: 'toggle-archive' } | { kind: 'deep-link'; hash: string } | { kind: 'archive'; requirementId: string; archived: boolean }
-const inlineReviewPopoverSize = { width: 480, height: 620 } as const
+const inlineReviewPopoverSize = { width: 720, height: 760 } as const
 function inlinePopoverPositionFromRect(rect: Pick<DOMRect, 'top' | 'bottom' | 'left'>, size: { width: number; height: number }): InlinePopoverPosition {
   const padding = 12
   const gap = 10
   const viewportMaxHeight = Math.max(160, window.innerHeight - padding * 2)
   const desiredHeight = Math.min(size.height, viewportMaxHeight)
+  const left = Math.min(Math.max(padding, rect.left), Math.max(padding, window.innerWidth - size.width - padding))
+  if (size.height >= 600) {
+    const placement: InlinePopoverPosition['placement'] = rect.top > window.innerHeight / 2 ? 'above' : 'below'
+    const top = Math.max(padding, (window.innerHeight - desiredHeight) / 2)
+    return { rect: { top, left }, placement, maxHeight: desiredHeight }
+  }
   const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap - padding)
   const spaceAbove = Math.max(0, rect.top - gap - padding)
   const usefulBelowHeight = Math.min(desiredHeight, size.height > 360 ? 280 : 180)
@@ -69,7 +75,6 @@ function inlinePopoverPositionFromRect(rect: Pick<DOMRect, 'top' | 'bottom' | 'l
   const maxHeight = Math.max(160, Math.min(desiredHeight, available || viewportMaxHeight))
   const rawTop = placement === 'below' ? rect.bottom + gap : rect.top - maxHeight - gap
   const top = Math.min(Math.max(padding, rawTop), Math.max(padding, window.innerHeight - maxHeight - padding))
-  const left = Math.min(Math.max(padding, rect.left), Math.max(padding, window.innerWidth - size.width - padding))
   return { rect: { top, left }, placement, maxHeight }
 }
 function visibleEditorContents(root: HTMLElement | null | undefined): HTMLElement | undefined {
@@ -868,14 +873,16 @@ export function InlineReviewComposer({ item, sourceMarkdown, requirementId, posi
       <div><div className={css.decisionTags}><b>{statusLabel[item.severity] ?? item.severity}</b><span>{reviewTypeLabel[item.type]}</span><span>{evidenceStatusLabel[item.epistemicStatus] ?? item.epistemicStatus}</span></div><strong>{item.statement}</strong></div>
       <span className={css.inlineReviewHeadActions}><button type="button" onClick={() => void navigator.clipboard.writeText(`${location.origin}${location.pathname}#spec-collab/${requirementId}/tasks/${item.id}`)}>复制链接</button><button type="button" aria-label="关闭问题窗口" title="关闭" onClick={close}>×</button></span>
     </header>
-    <section className={css.inlineReviewQuestion}><span>待回答</span><MarkdownBody text={item.question}/></section>
-    {primarySource && <button type="button" className={css.inlineReviewSource} onClick={() => locateSource(primarySource.targetKey)}><span>{primarySource.label}{primarySource.line ? ` · 第 ${primarySource.line} 行` : ''}</span><q>{primarySource.markdown.replace(/\s+/g, ' ').slice(0, 96)}{primarySource.markdown.length > 96 ? '…' : ''}</q></button>}
-    {item.response ? <div className={css.decisionResponse}><span>已回复</span><strong>{item.response.participant.nickname}</strong><small>{dispositionLabel[item.response.disposition]}</small><MarkdownBody text={item.response.body}/></div> : canRespond ? <>
-      {recommendations.length > 0 && <fieldset className={`${css.decisionOptions} ${css.inlineDecisionOptions}`}><legend>可采用的回答</legend>{recommendations.map((option, index) => <button type="button" key={option} className={body === option ? css.selectedDecisionOption : ''} aria-pressed={body === option} onClick={() => choose(option)}><span>{option}</span><b>{body === option ? '已选择' : String(index + 1).padStart(2, '0')}</b></button>)}</fieldset>}
-      <div className={`${css.decisionForm} ${css.inlineDecisionForm}`}><label>保存后如何处理<select required value={disposition} onChange={event => setDisposition(event.target.value as keyof typeof dispositionLabel)}>{Object.entries(dispositionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><p className={css.decisionModeHint}>{dispositionGuidance[disposition]}</p><label>最终结论<textarea required value={body} onChange={event => setBody(event.target.value)} placeholder={disposition === 'evidence' ? '粘贴数据、案例或来源链接，并说明它支持什么结论' : disposition === 'joint-review' ? '可选：补充希望产品和研发重点讨论的边界' : '写清最终判断、适用范围、例外情况和取舍理由'}/></label></div>
-      <details className={css.inlineReviewDetails}><summary>影响与依据</summary><section><h3>为什么需要明确</h3><MarkdownBody text={item.impact}/></section><section><h3>依据与来源 · {item.evidence.length}</h3>{item.evidence.length === 0 ? <p className={css.decisionEmpty}>当前没有可核对的资料，可以按业务判断回答，或选择保留待核对。</p> : <div className={css.decisionEvidenceList}>{item.evidence.map((evidence, index) => <div className={css.decisionEvidence} key={`${evidence.source}-${index}`}><code>{evidence.source}{evidence.version ? `@${evidence.version}` : ''}</code><MarkdownBody text={evidence.statement}/></div>)}</div>}</section>{(item.affectedSections.length > 0 || item.affectedAcceptanceIds.length > 0) && <section><h3>可能影响</h3><p>{[...item.affectedSections, ...item.affectedAcceptanceIds].join(' · ')}</p></section>}</details>
-      <div className={css.inlineReviewActions}><button type="button" onClick={close}>取消</button><div>{nextItemId && <button type="button" disabled={!canSubmit} onClick={() => void submit(false)}>保存并留在此处</button>}<button type="submit" className={css.execute} disabled={!canSubmit}>{busy ? '保存中' : nextItemId ? '保存并下一题' : '保存回答'}</button></div></div>
-    </> : <div className={css.decisionResponse}><span>{statusLabel[item.status] ?? item.status}</span><strong>这条记录当前不可回复</strong><p>你仍可以查看完整问题、影响和来源。</p></div>}
+    <div className={css.inlineReviewBody} data-dialog-scroll-region>
+      <section className={css.inlineReviewQuestion}><span>待回答</span><MarkdownBody text={item.question}/></section>
+      {primarySource && <button type="button" className={css.inlineReviewSource} onClick={() => locateSource(primarySource.targetKey)}><span>{primarySource.label}{primarySource.line ? ` · 第 ${primarySource.line} 行` : ''}</span><q>{primarySource.markdown.replace(/\s+/g, ' ').slice(0, 96)}{primarySource.markdown.length > 96 ? '…' : ''}</q></button>}
+      {item.response ? <div className={css.decisionResponse}><span>已回复</span><strong>{item.response.participant.nickname}</strong><small>{dispositionLabel[item.response.disposition]}</small><MarkdownBody text={item.response.body}/></div> : canRespond ? <>
+        {recommendations.length > 0 && <fieldset className={`${css.decisionOptions} ${css.inlineDecisionOptions}`}><legend>可采用的回答</legend>{recommendations.map((option, index) => <button type="button" key={option} className={body === option ? css.selectedDecisionOption : ''} aria-pressed={body === option} onClick={() => choose(option)}><span>{option}</span><b>{body === option ? '已选择' : String(index + 1).padStart(2, '0')}</b></button>)}</fieldset>}
+        <div className={`${css.decisionForm} ${css.inlineDecisionForm}`}><label>保存后如何处理<select required value={disposition} onChange={event => setDisposition(event.target.value as keyof typeof dispositionLabel)}>{Object.entries(dispositionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><p className={css.decisionModeHint}>{dispositionGuidance[disposition]}</p><label>最终结论<textarea required value={body} onChange={event => setBody(event.target.value)} placeholder={disposition === 'evidence' ? '粘贴数据、案例或来源链接，并说明它支持什么结论' : disposition === 'joint-review' ? '可选：补充希望产品和研发重点讨论的边界' : '写清最终判断、适用范围、例外情况和取舍理由'}/></label></div>
+        <details className={css.inlineReviewDetails}><summary>影响与依据</summary><section><h3>为什么需要明确</h3><MarkdownBody text={item.impact}/></section><section><h3>依据与来源 · {item.evidence.length}</h3>{item.evidence.length === 0 ? <p className={css.decisionEmpty}>当前没有可核对的资料，可以按业务判断回答，或选择保留待核对。</p> : <div className={css.decisionEvidenceList}>{item.evidence.map((evidence, index) => <div className={css.decisionEvidence} key={`${evidence.source}-${index}`}><code>{evidence.source}{evidence.version ? `@${evidence.version}` : ''}</code><MarkdownBody text={evidence.statement}/></div>)}</div>}</section>{(item.affectedSections.length > 0 || item.affectedAcceptanceIds.length > 0) && <section><h3>可能影响</h3><p>{[...item.affectedSections, ...item.affectedAcceptanceIds].join(' · ')}</p></section>}</details>
+      </> : <div className={css.decisionResponse}><span>{statusLabel[item.status] ?? item.status}</span><strong>这条记录当前不可回复</strong><p>你仍可以查看完整问题、影响和来源。</p></div>}
+    </div>
+    {canRespond && <div className={css.inlineReviewActions}><button type="button" onClick={close}>取消</button><div>{nextItemId && <button type="button" disabled={!canSubmit} onClick={() => void submit(false)}>保存并留在此处</button>}<button type="submit" className={css.execute} disabled={!canSubmit}>{busy ? '保存中' : nextItemId ? '保存并下一题' : '保存回答'}</button></div></div>}
   </form>
 }
 export function DiscussionPanel({ requirement, notifications, focusedCommentId, onSelectComment, onLocateComment, act, api }: { requirement: RequirementView; notifications?: Notification[] | undefined; selection?: { quote: string } | undefined; text?: string; setText?: (value: string) => void; cancel?: () => void; submit?: () => Promise<void>; focusedCommentId?: string | undefined; onSelectComment?: (commentId: string) => void; onLocateComment?: (commentId: string) => void; act: Act; api: SpecApi }) {

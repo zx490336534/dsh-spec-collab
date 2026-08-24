@@ -52,3 +52,70 @@ test('Portal 对话框继承插件主题且移动端页签热区不小于 44px',
   const tabHeights = await page.getByRole('tab').evaluateAll(tabs => tabs.map(tab => tab.getBoundingClientRect().height))
   expect(tabHeights.every(height => height >= 44)).toBe(true)
 })
+
+test('长批注弹窗只滚动正文并始终保留标题与提交操作', async ({ page }) => {
+  await page.setViewportSize({ width: 1256, height: 600 })
+  await openWorkbench(page)
+  await page.getByRole('complementary', { name: '需求协作' }).getByRole('button', { name: /本提交新增口径是否已获产品确认/ }).click()
+
+  const dialog = page.getByRole('dialog', { name: '回答待处理问题' })
+  const body = dialog.locator('[data-dialog-scroll-region]')
+  const header = dialog.locator('header')
+  const submit = dialog.getByRole('button', { name: /保存回答|保存并下一题/ })
+  const source = dialog.getByRole('button', { name: /目标与用户结果/ })
+  const firstOption = dialog.getByRole('button', { name: /确认全部新增口径/ })
+  await expect(dialog).toBeVisible()
+  await expect(body).toBeVisible()
+  await expect(submit).toBeVisible()
+  await expect(source).toBeVisible()
+  await expect(firstOption).toBeVisible()
+
+  const dialogBox = await dialog.boundingBox()
+  const sourceBox = await source.boundingBox()
+  const optionBox = await firstOption.boundingBox()
+  expect(dialogBox).not.toBeNull()
+  expect(sourceBox).not.toBeNull()
+  expect(optionBox).not.toBeNull()
+  expect(dialogBox!.width).toBeGreaterThanOrEqual(680)
+  expect(dialogBox!.height).toBeGreaterThanOrEqual(560)
+  expect(dialogBox!.x).toBeGreaterThanOrEqual(12)
+  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(1256 - 12)
+  expect(sourceBox!.y + sourceBox!.height).toBeLessThanOrEqual(optionBox!.y)
+  const canScroll = await body.evaluate(element => element.scrollHeight > element.clientHeight)
+  expect(canScroll).toBe(true)
+  const before = { header: await header.boundingBox(), submit: await submit.boundingBox() }
+  await body.evaluate(element => { element.scrollTop = element.scrollHeight })
+  const after = { header: await header.boundingBox(), submit: await submit.boundingBox() }
+
+  expect(before.header).not.toBeNull()
+  expect(before.submit).not.toBeNull()
+  expect(after.header).not.toBeNull()
+  expect(after.submit).not.toBeNull()
+  expect(Math.abs(after.header!.y - before.header!.y)).toBeLessThanOrEqual(1)
+  expect(Math.abs(after.submit!.y - before.submit!.y)).toBeLessThanOrEqual(1)
+})
+
+test('小视口表单对话框滚动时保留标题与底部操作', async ({ page }) => {
+  await page.setViewportSize({ width: 650, height: 360 })
+  await openWorkbench(page)
+  await page.locator('[data-dsh-spec-collab-view] header button').last().click()
+
+  const dialog = page.getByRole('dialog', { name: '设置协作身份' })
+  const form = dialog.locator('form')
+  const heading = dialog.getByRole('heading', { name: '设置花名和角色' })
+  const submit = dialog.getByRole('button', { name: '保存身份' })
+  await expect(dialog).toBeVisible()
+  await expect(submit).toBeVisible()
+  expect(await form.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+
+  const before = { heading: await heading.boundingBox(), submit: await submit.boundingBox() }
+  await form.evaluate(element => { element.scrollTop = element.scrollHeight })
+  const after = { heading: await heading.boundingBox(), submit: await submit.boundingBox() }
+
+  expect(before.heading).not.toBeNull()
+  expect(before.submit).not.toBeNull()
+  expect(after.heading).not.toBeNull()
+  expect(after.submit).not.toBeNull()
+  expect(Math.abs(after.heading!.y - before.heading!.y)).toBeLessThanOrEqual(1)
+  expect(Math.abs(after.submit!.y - before.submit!.y)).toBeLessThanOrEqual(1)
+})
