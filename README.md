@@ -7,7 +7,7 @@ DeepSeek Harness 的需求“编辑校样台”，用于把原始需求澄清为
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
-兼容 DeepSeek Harness `v0.1.1-rc.1`。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；DSH 精简侧栏仅显示“设置”时，也会正常挂载“需求讨论”入口。
+当前发布版本为 `v0.3.0`，兼容 DeepSeek Harness `v0.1.1-rc.1`。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；DSH 精简侧栏仅显示“设置”时，也会正常挂载“需求讨论”入口。
 
 ## 一键安装
 
@@ -45,13 +45,33 @@ dsh plugin --profile web update dsh-spec-collab@latest
   -> 输出 Ready Spec
 ```
 
+每个需求固定绑定一个 DSH 工作区和一条 Git 版本链。AI 的审核、评论分析和候选 Patch 都基于明确 commit；产品与研发的确认也绑定 commit。正文变化后，受影响的确认和候选 Patch 会失效，避免拿旧结论证明新版本已经就绪。
+
+## 工作台结构
+
+当前工作台以需求正文为主画布，不再把流程拆成多个相互割裂的页面：
+
+- 顶部显示需求标题、绑定工作区、当前 commit 和“澄清 / 产品确认 / 产研确认 / 已就绪”四阶段进度。
+- 左侧需求栏提供搜索、阶段/参与者/风险筛选、新建、归档、恢复和删除；收起后正文获得更大空间。
+- 中间正文支持 Markdown 编辑、显式保存、整篇评论、行内批注、原文定位和评论定位；正文上方汇总待回答问题、打开讨论、AI 建议和生效 Decision。
+- 右侧协作栏分为“下一步 / 讨论 / 洞察 / 记录”。“下一步”按当前参与者聚合待办，“记录”集中展示 Decision 与版本历史。
+- “我的工作”和通知跨需求汇总与本人相关的回复、确认、提及、指派及状态变化；服务端通过 SSE 推送变化，多浏览器刷新后仍可继续。
+- 桌面宽屏使用正文与协作栏并排布局；窄屏切换为“需求列表 / 需求正文 / 协作”，并保留键盘导航和正文专注模式。
+
+## 角色与责任
+
+| 参与者 | 可以做什么 | 不能代替谁 |
+| --- | --- | --- |
+| 产品 | 创建需求、补充来源、回复问题、编辑正文、接受 Patch、记录 Decision、确认产品语义 | 不能代替研发确认技术理解 |
+| 研发 | 评论实现影响、补充技术证据、参与 Decision、确认研发理解 | 不能代替产品决定业务语义 |
+| 产品 AI / 研发 AI | 读取绑定工作区及授权资料、提交结构化问题、分析评论、提出候选 Patch | 不能直接写 Git、确认 commit 或标记 Ready |
+| 匿名访问者 | 查看需求和协作记录 | 首次评论、修改、回复或确认前必须登记花名与责任角色 |
+
 ## 完整演示
 
-点击下方截图观看从选择工作区到生成 Ready Spec 的完整 MP4 录屏：
+下面的图片来自一条全新需求从创建到 Ready Spec 的真实流程，均使用 ego-browser 截取，并在截图前收起 DSH 主侧边栏。
 
-[![Ready 质量门与最终 Ready Spec](docs/assets/demo-05-ready.png)](docs/assets/spec-collab-walkthrough.mp4)
-
-**[播放 MP4 录屏](docs/assets/spec-collab-walkthrough.mp4)** · **[阅读完整图文教程](docs/usage-walkthrough.md)**
+**[阅读完整图文教程](docs/usage-walkthrough.md)**
 
 <details>
 <summary>查看完整流程截图</summary>
@@ -60,39 +80,61 @@ dsh plugin --profile web update dsh-spec-collab@latest
 
 ![新建需求并选择工作区](docs/assets/demo-01-workspace.png)
 
-### 2. AI 审核问题和人工回复
+### 2. AI 问题清单与人工回复
 
 ![AI 审核问题和人工回复](docs/assets/demo-02-ai-review.png)
 
-### 3. 审核并接受候选 Patch
+### 3. 审核候选 Patch
 
 ![审核并接受候选 Patch](docs/assets/demo-03-patches.png)
 
-### 4. 记录人工 Decision
+### 4. 查看生效 Decision
 
-![人工确认的产品 Decision](docs/assets/demo-04-decisions.png)
+![已生效的产品 Decision](docs/assets/demo-04-decisions.png)
+
+### 5. 查看并导出 Ready Spec
+
+![Ready 质量门与最终 Ready Spec](docs/assets/demo-05-ready.png)
 
 </details>
 
-## 能力
+## 当前能力（v0.3.0）
+
+### 需求正文与版本
 
 - 匿名只读；首次评论、修改、回复、确认前登记 `participant_id + 花名 + 责任角色`。
 - 原始需求、Markdown PRD、相关链接与代码范围分别记录为来源，不静默混成事实。
 - 正式正文只存在 `requirements/<id>/spec.md`，每次显式保存生成一个 Git commit。
 - 保存携带 `baseCommit`；过期或存在外部未提交修改时拒绝覆盖。
+- 本地草稿存入 IndexedDB，异常关闭后可恢复；正式保存仍由 Git commit 承载。
+- 版本历史与 AI Patch 共用结构化行级 diff，未变上下文可折叠；恢复历史会创建新 commit。
+- 需求支持搜索、筛选、归档、恢复和删除；删除同时移除对应正式 Spec 与关联洞察关系。
+
+### AI 审核与候选修改
+
 - `FACT / INFERENCE / ASSUMPTION / TO_VERIFY` 结构化 Review Item；`FACT` 强制可访问且带版本的证据。
 - 同一需求在同一流程阶段复用一个 DSH AI session；审核、评论分析和追问只追加增量提示，进入下一阶段后再创建新会话。
 - 每条实质评论提交后自动进入当前阶段 AI 会话，回复必须包含理解、证据或 `TO_VERIFY`、影响章节/AC 和建议处置。
 - AI 只能提交 Review Item、评论分析和候选 patch；不能写 Git、代替人确认或标记 Ready。
 - 保存和 patch 接受后自动触发 change review；候选 patch 基于精确 commit，过期自动失效。
+
+### 协作、Decision 与洞察
+
 - Decision、Comment、Confirmation 分离；确认绑定 commit，可按 section/AC 局部失效。
+- 评论支持页面级和行内批注、回复、提及、指派、筛选、解决、重开和深链；正文定位与评论定位使用同一套交互。
+- “我的工作”按待回复、待确认、由我发起等类别跨需求聚合；通知覆盖提及、回复和状态变化。
+- 客户、公司、来源和洞察为独立实体；洞察可关联多个需求、章节或 AC，支持 CSV/Markdown 原子导入和去重。
+- v3 协作账本持久化协作、通知、洞察、统一指标和 AI 阶段会话，并通过 SSE 刷新客户端状态。
+
+### Ready 质量门与交付
+
 - Ready 门检查目标与用户结果、稳定 AC、范围与非范围、业务语义、证据来源、测试约束。
 - Ready 输出包含 commit SHA、稳定 AC、Decision、来源、非阻塞 Open Questions 和产品/研发确认人。
+- Ready Spec 可直接复制 Markdown、下载 `.md`、复制 commit 或复制分享链接。
 - Agent 工具：`spec_list`、`spec_read`、`spec_reply`、`spec_submit_review`、`spec_propose_patch`。
-- v3 协作账本、插件内通知和 SSE，多浏览器刷新后仍可继续；评论支持页面级/行内、提及、指派、筛选、重开和深链。
-- 客户、公司、来源和洞察为独立实体；洞察可关联多个需求、章节或 AC，支持 CSV/Markdown 原子导入和去重。
-- 本地草稿存入 IndexedDB，异常关闭后可恢复；正式保存仍由 Git commit 承载。
-- 版本历史与 AI patch 共用结构化行级 diff，未变上下文可折叠；恢复历史会创建新 commit。
+
+### 工作区上下文
+
 - 新建需求必须选择一个 DSH 工作区；所有 AI 审核和评论分析 session 固定挂载该工作区，不会落入未分组 session。
 - 支持默认 AI 上下文与工作区专属上下文合并，统一声明 Skill、MCP server、本地参考文档和 Agent Preset。
 
