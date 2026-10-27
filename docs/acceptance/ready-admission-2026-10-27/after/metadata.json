@@ -1,0 +1,24 @@
+{
+  "mode": "working-tree",
+  "commit": "311b9f7f06af433acef032acd913ef93adea53fe",
+  "cwd": "/Users/zhongxin/dsh-spec-collab",
+  "startedAt": "2026-10-27T02:19:16.668Z",
+  "finishedAt": "2026-10-27T02:19:20.910Z",
+  "node": "v24.21.0",
+  "command": [
+    "/Users/zhongxin/.hermes/node/bin/node",
+    "/Users/zhongxin/dsh-spec-collab/node_modules/vitest/vitest.mjs",
+    "run",
+    "tests/ready-admission.spec.ts",
+    "--maxWorkers=1",
+    "--minWorkers=1",
+    "--reporter=verbose"
+  ],
+  "exitCode": 0,
+  "hashes": {
+    "src/engine.ts": "0255acbf33a9eb8d0ff78acef560b86767eae4c9cb517afe65af223063e9cbb7",
+    "src/client/workflow.ts": "903cf71e7166f6ea4f2e1d4e8ea84e08b410b2091a52f47d472b71cebe5dc508",
+    "src/ready-admission.ts": "9ed3ad6df9fe0399104d8bfc08424ff9274af45e2292bd51ad690633dafa3a99",
+    "tests/ready-admission.spec.ts": "56547b3f07d9c6be95d73dc69cb4a00d4c41812c4dcbae846b75ae883e354a3e"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "url": "http://127.0.0.1:55169",
+  "startedAt": "2026-10-27T02:26:58.638Z",
+  "root": "/private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-final-a10ctK",
+  "workspaceId": "6dade168-f58f-469c-9686-16e775141f27",
+  "requirementId": "隔离验收-超时重试需求-49bb25b0",
+  "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+  "evidenceCommit": "fcf74a7cd303ce0fe3c35a332acb0ca3025a34b5",
+  "product": {
+    "participantId": "live-ready-product",
+    "nickname": "验收产品",
+    "role": "product",
+    "kind": "human"
+  },
+  "engineering": {
+    "participantId": "live-ready-engineering",
+    "nickname": "验收研发",
+    "role": "engineering",
+    "kind": "human"
+  },
+  "syntheticSetup": true,
+  "syntheticReviews": [
+    "product-first",
+    "product-second",
+    "change-review"
+  ],
+  "realEngineeringPrecheck": "not-yet-requested",
+  "hashes": {
+    "lib/index.js": "7783fc6b2fece665ceb9ac263209f4549904df192ac966fdb53d60ad995d0b4a",
+    "lib/client.js": "2c68c2b13c829721d80e6fd5c36dde38da0ee31532cda3f21522c9c1ff18bf48",
+    "src/engine.ts": "0255acbf33a9eb8d0ff78acef560b86767eae4c9cb517afe65af223063e9cbb7",
+    "src/ready-admission.ts": "9ed3ad6df9fe0399104d8bfc08424ff9274af45e2292bd51ad690633dafa3a99"
+  },
+  "setupEvidence": "synthetic product reviews and confirmations; engineering precheck requested through real DSH HTTP route"
+}

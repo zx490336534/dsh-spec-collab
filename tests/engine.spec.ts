@@ -16,6 +16,16 @@ const coordinator: AiCoordinator = {
 }
 function setup() { const dir = mkdtempSync(join(tmpdir(), 'spec-engine-')); const engine = new CollaborationEngine(join(dir, 'events.json'), new GitRequirementStore(join(dir, 'repo'))); engine.setCoordinator(coordinator); return engine }
 function create(engine: CollaborationEngine): RequirementView { const result = engine.apply('create', { kind: 'requirement.create', participant: product, title: '重试策略', rawRequirement: '支付失败后需要自动重试。', sources: [], workspaceId }); if (!result.ok) throw new Error(result.error); return result.requirement }
+async function completeReadyReviews(engine: CollaborationEngine, requirementId: string): Promise<void> {
+  const requested = engine.apply(`engineering-precheck-${requirementId}`, { kind: 'review.request', participant: engineering, requirementId, reviewKind: 'engineering-precheck' })
+  if (!requested.ok) throw new Error(requested.error)
+  await Promise.resolve()
+  const view = engine.view(requirementId)
+  for (const run of view.aiRuns.filter(item => item.commit === view.currentCommit && ['queued', 'running'].includes(item.status))) {
+    engine.submitReview({ requirementId, commit: view.currentCommit, runId: run.id, ai, maturitySummary: '当前版本审核已完成，可以进入人工确认。', items: [] })
+  }
+}
+
 function readyMarkdown(view: RequirementView): string { return view.version.markdown.replace('<!-- AI 初审后补充 -->', '为支付用户降低瞬时网络失败率，重试成功或明确失败可观察。').replace('### 范围\n\n### 非范围', '支付提交入口、网络超时状态。\n\n### 非范围\n\n不修改支付渠道选择。').replace('## 业务术语与规则\n', '## 业务术语与规则\n\n瞬时失败指网关超时；最多重试两次。\n').replace('- **AC-1**：待澄清', '- **AC-RETRY-001**：给定网关超时，首次失败后最多重试两次并返回最终状态。').replace('## 测试约束\n', '## 测试约束\n\n使用可控制超时次数的网关 fixture，不连接生产支付渠道。\n') }
 
 describe('CollaborationEngine', () => {
@@ -329,6 +339,7 @@ describe('CollaborationEngine', () => {
     expect(engine.apply('product-confirm', { kind: 'confirmation.create', participant: product, requirementId: view.id, role: 'product', scope: 'version' }).ok).toBe(true)
     expect(engine.apply('to-joint', { kind: 'stage.advance', participant: product, requirementId: view.id }).ok).toBe(true)
     expect(engine.apply('engineering-confirm', { kind: 'confirmation.create', participant: engineering, requirementId: view.id, role: 'engineering', scope: 'version' }).ok).toBe(true)
+    await completeReadyReviews(engine, view.id)
     const ready = engine.apply('ready', { kind: 'ready.generate', participant: product, requirementId: view.id })
     expect(ready.ok).toBe(true)
     if (ready.ok) expect(ready.requirement).toMatchObject({ stage: 'ready', readyPackage: { commit: view.currentCommit } })
@@ -430,6 +441,7 @@ describe('CollaborationEngine', () => {
     engine.apply('confirm-engineering', { kind: 'confirmation.create', participant: engineering, requirementId: view.id, role: 'engineering', scope: 'version' })
     engine.apply('confirm-unrelated', { kind: 'confirmation.create', participant: product, requirementId: view.id, role: 'product', scope: 'section', scopeId: '业务术语与规则' })
     engine.apply('confirm-ac', { kind: 'confirmation.create', participant: product, requirementId: view.id, role: 'product', scope: 'acceptance-criterion', scopeId: 'AC-RETRY-001' })
+    await completeReadyReviews(engine, view.id)
     const ready = engine.apply('mark-ready', { kind: 'ready.generate', participant: product, requirementId: view.id }); if (!ready.ok) throw new Error(ready.error)
     const returned = engine.apply('downstream-return', { kind: 'downstream.return', participant: engineering, requirementId: view.id, summary: '下游验证发现重试次数语义不明确', evidence: [{ statement: '下游消费者无法区分首次请求与重试请求。', source: 'downstream:test-report', version: 'commit-123', accessible: true }], affectedSections: [], affectedAcceptanceIds: ['AC-RETRY-001'] })
     if (!returned.ok) throw new Error(returned.error)

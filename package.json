@@ -1,6 +1,6 @@
 {
   "name": "dsh-spec-collab",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AI-assisted requirement clarification and Git-backed Spec co-creation for DeepSeek Harness, ending at a human-confirmed Ready Spec.",
   "keywords": [
     "deepseek-harness",
@@ -46,10 +46,16 @@
   "files": [
     "lib",
     "src",
-    "docs",
+    "docs/*.md",
+    "docs/*.csv",
+    "docs/assets",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json && tsdown",
@@ -89,6 +95,7 @@
     "vitest": "^3.0.0"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

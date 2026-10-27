@@ -7,14 +7,14 @@ DeepSeek Harness 的需求“编辑校样台”，用于把原始需求澄清为
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
-当前发布版本为 `v0.3.0`，兼容 DeepSeek Harness `v0.1.1-rc.1`。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；DSH 精简侧栏仅显示“设置”时，也会正常挂载“需求讨论”入口。
+当前版本为 `v0.3.1`，兼容 DeepSeek Harness `v0.1.1-rc.1`。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；DSH 精简侧栏仅显示“设置”时，也会正常挂载“需求讨论”入口。
 
 ## 一键安装
 
 已有 Node.js 环境时，无需先全局安装 DSH CLI：
 
 ```sh
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-spec-collab@latest
+npx -y @deepseek-ai/dsh@0.1.1-rc.1 plugin --profile web add dsh-spec-collab@latest
 ```
 
 如果 `dsh` 已在 `PATH` 中，也可以使用简写：
@@ -98,7 +98,7 @@ dsh plugin --profile web update dsh-spec-collab@latest
 
 </details>
 
-## 当前能力（v0.3.0）
+## 当前能力（v0.3.1）
 
 ### 需求正文与版本
 
@@ -129,6 +129,9 @@ dsh plugin --profile web update dsh-spec-collab@latest
 ### Ready 质量门与交付
 
 - Ready 门检查目标与用户结果、稳定 AC、范围与非范围、业务语义、证据来源、测试约束。
+- 生成 Ready 必须处于产研共审、已绑定工作区，当前 commit 至少有一次已完成的 `engineering-precheck`，且没有当前版本正在排队/运行的审核或待处理候选 Patch。缺失、失败、运行中或旧 commit 的研发预审都不能替代当前版本已完成的预审。
+- 产品与研发必须分别对同一个当前 commit 做有效的整版确认；章节、AC 或 Decision 确认不能替代。正文改版后重新完成当前版本研发预审和双方整版确认。产品二审仍是进入产品确认阶段的准入条件。
+- 前端引导和服务端生成共用 `src/ready-admission.ts`。服务端从 Git 正文重新计算六项内容检查，不信任客户端传入的检查结果。审核完成表示结构化结果已被接受，六项通过主要证明结构与记录满足校验；AI 实际读取、来源原文是否支持陈述及业务语义质量需要工具轨迹与人工复核。
 - Ready 输出包含 commit SHA、稳定 AC、Decision、来源、非阻塞 Open Questions 和产品/研发确认人。
 - Ready Spec 可直接复制 Markdown、下载 `.md`、复制 commit 或复制分享链接。
 - Agent 工具：`spec_list`、`spec_read`、`spec_reply`、`spec_submit_review`、`spec_propose_patch`。

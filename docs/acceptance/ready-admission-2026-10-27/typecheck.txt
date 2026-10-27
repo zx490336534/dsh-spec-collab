@@ -1,0 +1,4 @@
+
+> dsh-spec-collab@0.3.0 typecheck /Users/zhongxin/dsh-spec-collab
+> tsc --noEmit
+

@@ -1,0 +1,50 @@
+
+ RUN  v3.2.7 /Users/zhongxin/dsh-spec-collab
+
+ ❯ tests/ready-admission.spec.ts (12 tests | 1 failed | 11 skipped) 224ms
+   ↓ Ready admission through the public engine actions > rejects generation without engineering precheck even when both roles confirmed and all six checks pass
+   ↓ Ready admission through the public engine actions > rejects an engineering precheck that is queued
+   ↓ Ready admission through the public engine actions > rejects an engineering precheck that is running
+   ↓ Ready admission through the public engine actions > rejects an engineering precheck that is failed
+   ↓ Ready admission through the public engine actions > rejects an old engineering precheck after the body changes, even if both roles reconfirm
+   ↓ Ready admission through the public engine actions > allows a completed current precheck and binds the package to that commit
+   ↓ Ready admission through the public engine actions > requires both roles to reconfirm after a body change and a new precheck
+   ↓ Ready admission through the public engine actions > rejects late submissions for an old commit rather than completing a current precheck
+   ↓ Ready admission through the public engine actions > does not generate while a new review is running after an earlier successful precheck
+   ↓ Ready admission through the public engine actions > requires a pending candidate patch to be accepted or rejected before generation
+   × Ready admission through the public engine actions > preserves a delayed review launch after a rejected Ready action 224ms
+     → expected { …(8) } to match object { status: 'running', …(1) }
+(11 matching properties omitted from actual)
+   ↓ Ready admission through the public engine actions > enforces the same rule through the HTTP action route and succeeds after precheck completion
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > preserves a delayed review launch after a rejected Ready action
+AssertionError: expected { …(8) } to match object { status: 'running', …(1) }
+(11 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "sessionId": "delayed-real-session",
+-   "status": "running",
++   "status": "queued",
+  }
+
+ ❯ tests/ready-admission.spec.ts:177:77
+    175|     release!('delayed-real-session')
+    176|     await Promise.resolve()
+    177|     expect(engine.view(requirementId).aiRuns.find(run => run.id === ru…
+       |                                                                             ^
+    178|     expect(engine.hasAiSession(requirementId, 'delayed-real-session'))…
+    179|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 11 skipped (12)
+   Start at  10:14:07
+   Duration  562ms (transform 145ms, setup 0ms, collect 166ms, tests 224ms, environment 0ms, prepare 54ms)
+

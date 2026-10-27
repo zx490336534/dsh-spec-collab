@@ -1,0 +1,41 @@
+Captured from completed tool job bash-1a6e80050ece464c, exit code 0.
+Execution: 2026-10-27 Asia/Shanghai; final source includes the delayed-launch callback fix.
+Commands, executed sequentially:
+pnpm run typecheck
+pnpm test
+pnpm exec tsc -p tsconfig.build.json
+pnpm run bundle
+
+> dsh-spec-collab@0.3.0 typecheck
+> tsc --noEmit
+
+> dsh-spec-collab@0.3.0 test
+> vitest run --maxWorkers=1 --minWorkers=1 --exclude tests/e2e/**
+
+ RUN  v3.2.7 /Users/zhongxin/dsh-spec-collab
+
+ ✓ tests/ready-admission.spec.ts (12 tests) 2622ms
+ ✓ tests/engine.spec.ts (34 tests) 4701ms
+ ✓ tests/git-store.spec.ts (6 tests) 915ms
+ ✓ tests/workspace-context.spec.ts (2 tests) 15ms
+ ✓ tests/workflow.spec.ts (9 tests) 3ms
+ ✓ tests/review-runtime.spec.ts (2 tests) 5ms
+ ✓ tests/structured-diff.spec.ts (2 tests) 3ms
+ ✓ tests/review-context.spec.ts (3 tests) 2ms
+ ✓ tests/prompts.spec.ts (3 tests) 2ms
+ ✓ tests/review-checklist.spec.tsx (7 tests) 148ms
+ ✓ tests/browser-compat.spec.ts (8 tests) 25ms
+ ✓ tests/review-anchors.spec.ts (5 tests) 14ms
+ ✓ tests/client-utilities.spec.ts (7 tests) 12ms
+
+ Test Files  13 passed (13)
+      Tests  100 passed (100)
+   Start at  10:15:06
+   Duration  12.26s
+
+TypeScript declaration build: exit 0.
+tsdown v0.22.2 / rolldown v1.1.5:
+[ESM] lib/index.js 142.58 kB; build complete in 62ms.
+[CJS] lib/client.js 2.11 MB; build complete in 158ms.
+
+The separate before/after verifier artifacts include full verbose output and exact source/test SHA-256 hashes.

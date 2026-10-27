@@ -1,4 +1,5 @@
 import type { ParticipantRole, RequirementView, ReviewKind } from '../protocol.ts'
+import { hasCompletedCurrentReview, readyAdmission } from '../ready-admission.ts'
 
 export type TaskView = 'review' | 'patches' | 'ready'
 export type WorkflowCommand =
@@ -27,15 +28,10 @@ export function workflowState(requirement: RequirementView, participantRole: Par
   const blockers = currentReviews.filter(item => item.severity === 'blocking' && reviewIsOpen(item.status))
   const productBlockers = blockers.filter(item => item.status !== 'joint-review')
   const unanswered = blockers.filter(item => item.status === 'open')
-  const currentPatches = requirement.patches.filter(item => item.baseCommit === requirement.currentCommit && item.status === 'pending')
-  const currentRuns = requirement.aiRuns.filter(run => run.commit === requirement.currentCommit)
-  const activeRun = currentRuns.slice().reverse().find(run => ['queued', 'running'].includes(run.status))
-  const completed = (kind: ReviewKind): boolean => currentRuns.some(run => run.kind === kind && run.status === 'completed')
-  const productConfirmed = requirement.confirmations.some(item => item.commit === requirement.currentCommit && item.role === 'product' && item.scope === 'version' && item.status === 'active')
-  const engineeringConfirmed = requirement.confirmations.some(item => item.commit === requirement.currentCommit && item.role === 'engineering' && item.scope === 'version' && item.status === 'active')
-  const failedChecks = requirement.readiness.filter(check => !check.passed)
+  const { activeRun, engineeringReviewed, pendingPatches: currentPatches, failedChecks, productConfirmed, engineeringConfirmed } = readyAdmission(requirement, requirement.readiness)
+  const completed = (kind: ReviewKind): boolean => hasCompletedCurrentReview(requirement, kind)
 
-  if (!requirement.workspaceId) return {
+  if (!requirement.workspaceId?.trim()) return {
     eyebrow: '开始前', title: '关联需求所在的项目', detail: 'AI 会从这个项目读取代码、规范和团队知识，关联后不能中途切换。',
     actionLabel: '选择项目', command: { kind: 'bind-workspace' },
   }
@@ -81,7 +77,7 @@ export function workflowState(requirement: RequirementView, participantRole: Par
   }
 
   if (requirement.stage === 'joint-review') {
-    if (!completed('engineering-precheck')) return {
+    if (!engineeringReviewed) return {
       eyebrow: '产研共审', title: '从研发视角检查可实施性', detail: '重点检查现有实现、影响范围、兼容性和测试落点。',
       actionLabel: '开始研发检查', command: { kind: 'request-review', reviewKind: 'engineering-precheck' },
     }
@@ -125,6 +121,9 @@ export function workflowState(requirement: RequirementView, participantRole: Par
 
 export function friendlyActionError(error: string): string {
   const messages: Array<[string, string]> = [
+    ['engineering precheck is required for the current version', '需要先完成当前版本的研发检查；正文变更后请重新检查。'],
+    ['current version review is still running', '当前版本的 AI 检查仍在进行，请等待完成后再生成就绪需求。'],
+    ['current version has pending patches', '当前版本还有待审核的正文修改，请先接受或拒绝。'],
     ['product blocking review items remain', '还有阻塞问题未处理，请先完成待澄清事项。'],
     ['product second review is required', '需要先让 AI 根据回复整理并复核正文。'],
     ['product must confirm the current version', '需要产品角色确认当前版本后才能进入产研共审。'],

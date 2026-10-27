@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-27T02:51:16.559Z",
+  "pairedCalls": 27,
+  "successfulReviewSubmissions": 3,
+  "fixtureBundleCloned": true,
+  "specBundleCloned": true,
+  "sourceGitObjectMatches": true,
+  "readyContainsExactGitBody": true,
+  "readyHash": "d21e98799268b8425afb155818a89bc8fdafa6eda28eb4489ed00e6babb7d9d1",
+  "sourceAndBuildHashesMatchRecordedVersions": true,
+  "credentialValuesFoundInEvidence": false,
+  "filesScanned": 53,
+  "independentCloneRoot": "/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/ready-evidence-independent-IRWYr1"
+}

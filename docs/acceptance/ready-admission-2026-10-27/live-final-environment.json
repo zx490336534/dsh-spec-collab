@@ -1,0 +1,9 @@
+{
+  "root": "/private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-final-a10ctK",
+  "home": "/private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-final-a10ctK/dsh-home",
+  "project": "/private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-final-a10ctK/project",
+  "dataRoot": "/private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-final-a10ctK/data",
+  "repositoryPath": "/private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-final-a10ctK/data/repository",
+  "runtime": "/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime",
+  "credentialHandling": "Only the existing MAGPIE_GATEWAY_KEY was copied into a private temporary credential store; no value is in artifacts."
+}

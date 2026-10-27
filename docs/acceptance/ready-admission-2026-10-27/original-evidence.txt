@@ -1,0 +1,211 @@
+### 349e5227db1ac020621947e8cb7c859f92605357:README.md:6-35
+6: 
+7: ## 核心流程
+8: 
+9: ```text
+10: 输入原始需求
+11:   -> 产品 AI 自动初审（九个维度）
+12:   -> 产品逐项回应
+13:   -> 产品 AI 二次审核 + 候选 patch
+14:   -> 产品确认当前 commit
+15:   -> 产研 + 双方 AI 共审
+16:   -> 产品/研发分别确认当前 commit
+17:   -> 六项 Ready 门
+18:   -> 输出 Ready Spec
+19: ```
+20: 
+21: ## 能力
+22: 
+23: - 匿名只读；首次评论、修改、回复、确认前登记 `participant_id + 花名 + 责任角色`。
+24: - 原始需求、Markdown PRD、相关链接与代码范围分别记录为来源，不静默混成事实。
+25: - 正式正文只存在 `requirements/<id>/spec.md`，每次显式保存生成一个 Git commit。
+26: - 保存携带 `baseCommit`；过期或存在外部未提交修改时拒绝覆盖。
+27: - `FACT / INFERENCE / ASSUMPTION / TO_VERIFY` 结构化 Review Item；`FACT` 强制可访问且带版本的证据。
+28: - 产品 AI 初审、产品 AI 二审、研发 AI 预审、变更审核四类独立 DSH review session。
+29: - 每条实质评论提交后自动启动 AI 分析，回复必须包含理解、证据或 `TO_VERIFY`、影响章节/AC 和建议处置。
+30: - AI 只能提交 Review Item、评论分析和候选 patch；不能写 Git、代替人确认或标记 Ready。
+31: - 保存和 patch 接受后自动触发 change review；候选 patch 基于精确 commit，过期自动失效。
+32: - Decision、Comment、Confirmation 分离；确认绑定 commit，可按 section/AC 局部失效。
+33: - Ready 门检查目标与用户结果、稳定 AC、范围与非范围、业务语义、证据来源、测试约束。
+34: - Ready 输出包含 commit SHA、稳定 AC、Decision、来源、非阻塞 Open Questions 和产品/研发确认人。
+35: - Agent 工具：`spec_list`、`spec_read`、`spec_reply`、`spec_submit_review`、`spec_propose_patch`。
+
+### 349e5227db1ac020621947e8cb7c859f92605357:src/review-runtime.ts:91-101
+91:     'Use spec_read to retrieve the exact current data. Do not modify files directly.',
+92:     '每个 Review Item 必须给出至少三个具体、互斥或有明确取舍差异的 recommendedOptions，供用户快速选择；不得只重复“接受、拒绝、待验证”这类通用状态。',
+93:   ].join('\n')
+94: }
+95: function reviewPrompt(requirement: RequirementView, run: AiReviewRun, context: ReturnType<ReviewContextCatalog['resolve']>): string {
+96:   const tasks: Record<AiReviewRun['kind'], string> = {
+97:     'product-first': 'Perform the initial product review across goal, evidence, history-conflict, current-implementation, scope, semantics, completeness, acceptance, and risk. Submit structured findings with spec_submit_review. If the draft needs changes, also submit a candidate patch with spec_propose_patch.',
+98:     'product-second': 'Review product responses against their original Review Items. Do not close vague answers. Submit remaining/new findings with spec_submit_review and a reviewable candidate patch with spec_propose_patch.',
+99:     'engineering-precheck': 'Read the product-confirmed Spec and inspect relevant current code/history available in the workspace. Find implementation fact conflicts, affected entries/roles/states, technical ambiguity, compatibility/permission/data boundaries, and unverifiable acceptance criteria. Submit with spec_submit_review and propose a patch only when needed.',
+100:     'change-review': 'Review only the latest saved commit against its parent. Identify materiality, affected sections/ACs, confirmations or decisions that need reconfirmation, and new conflicts. Submit with spec_submit_review; propose a patch only when needed.',
+101:   }
+
+### ee7bb81824b3bbbb32b238f87202e744aed6b11c:docs/usage-walkthrough.md:24-66
+24: 
+25: 处理审核项时遵循以下规则：
+26: 
+27: - 有业务结论时选择推荐方案或自行输入，并说明取舍。
+28: - 有固定版本证据时补充来源、版本和证据说明。
+29: - 当前无法核验源码、历史或浏览器矩阵时选择 `TO_VERIFY`，不要把推测写成 `FACT`。
+30: - `接受 AI 建议` 用于无需修改正文即可确认的结论；`修改后接受` 表示仍需等待候选 Patch。
+31: 
+32: ## 3. 智能复审并接受候选 Patch
+33: 
+34: 产品回复完成后运行“智能复审”。AI 会检查回复是否真正覆盖原问题，并生成基于精确 `baseCommit` 的候选 Patch。打开“修改建议”，预览完整候选规范，确认变更范围和 AC 后由人工点击接受。
+35: 
+36: ![审核并接受候选 Patch](assets/demo-03-patches.png)
+37: 
+38: AI 只能提议 Patch，不能直接写 Git。人工接受后插件创建新 commit，并自动触发 change review；基于旧 commit 的候选 Patch 会失效。
+39: 
+40: ## 4. 记录 Decision 并确认产品版本
+41: 
+42: 对状态生命周期、范围边界或新增 AC 等关键选择，在“确认决策”中记录 Decision。Decision 与普通评论分离，包含结论、理由、确认人及受影响章节或 AC。
+43: 
+44: ![人工确认的产品 Decision](assets/demo-04-decisions.png)
+45: 
+46: 产品二审无当前版本阻塞项后进入“产品确认”，由产品确认当前 commit。任何后续正文修改都会使受影响的确认失效，必须重新确认。
+47: 
+48: ## 5. 研发预审、双角色确认和 Ready
+49: 
+50: 进入“产研共审”后运行“研发智能预审”。工程侧重点核验当前实现、共享组件影响、测试落点、浏览器矩阵及历史约束。演示工作区没有目标业务仓库源码，因此相关项被明确保留为非阻塞 `TO_VERIFY`，而不是虚构实现证据。
+51: 
+52: 研发确认与产品确认必须绑定同一个当前 commit。随后点击“生成就绪规范”，只有以下六项全部通过才能生成 Ready Spec：
+53: 
+54: - 目标与用户结果
+55: - 验收标准
+56: - 范围与非范围
+57: - 业务语义
+58: - 证据来源
+59: - 测试约束
+60: 
+61: ![Ready 质量门和最终 Ready Spec](assets/demo-05-ready.png)
+62: 
+63: 本次演示最终生成的 Ready Spec 绑定 commit `ac8182473bf5ce971cec92db9391b3f702867fe8`，产品和研发均确认该版本。历史 Review Item 保留在审核记录中用于审计，但不会继续阻塞新 commit；当前未核验的实现和兼容性问题则进入 Ready Spec 的“非阻塞 Open Questions”。
+64: 
+65: ## 正确使用要点
+66: 
+
+### fb70d2b529da46e9c94612fec7b530c3eddd0fdd:src/client/workflow.ts:23-105
+23: const reviewIsOpen = (status: RequirementView['reviewItems'][number]['status']): boolean => !['resolved', 'invalidated', 'non-blocking-verify'].includes(status)
+24: 
+25: export function workflowState(requirement: RequirementView, participantRole: ParticipantRole): WorkflowState {
+26:   const currentReviews = requirement.reviewItems.filter(item => item.commit === requirement.currentCommit)
+27:   const blockers = currentReviews.filter(item => item.severity === 'blocking' && reviewIsOpen(item.status))
+28:   const productBlockers = blockers.filter(item => item.status !== 'joint-review')
+29:   const unanswered = blockers.filter(item => item.status === 'open')
+30:   const currentPatches = requirement.patches.filter(item => item.baseCommit === requirement.currentCommit && item.status === 'pending')
+31:   const currentRuns = requirement.aiRuns.filter(run => run.commit === requirement.currentCommit)
+32:   const activeRun = currentRuns.slice().reverse().find(run => ['queued', 'running'].includes(run.status))
+33:   const completed = (kind: ReviewKind): boolean => currentRuns.some(run => run.kind === kind && run.status === 'completed')
+34:   const productConfirmed = requirement.confirmations.some(item => item.commit === requirement.currentCommit && item.role === 'product' && item.scope === 'version' && item.status === 'active')
+35:   const engineeringConfirmed = requirement.confirmations.some(item => item.commit === requirement.currentCommit && item.role === 'engineering' && item.scope === 'version' && item.status === 'active')
+36:   const failedChecks = requirement.readiness.filter(check => !check.passed)
+37: 
+38:   if (!requirement.workspaceId) return {
+39:     eyebrow: '开始前', title: '关联需求所在的项目', detail: 'AI 会从这个项目读取代码、规范和团队知识，关联后不能中途切换。',
+40:     actionLabel: '选择项目', command: { kind: 'bind-workspace' },
+41:   }
+42: 
+43:   if (activeRun) return {
+44:     eyebrow: 'AI 正在工作', title: activeRun.kind === 'engineering-precheck' ? '正在从研发视角检查需求' : '正在整理需求中的问题',
+45:     detail: '结果会自动出现在这里，可以先继续编辑正文。', actionLabel: '分析中', command: { kind: 'none' }, disabled: true,
+46:   }
+47: 
+48:   if (requirement.stage === 'product-review') {
+49:     if (!completed('product-first')) return {
+50:       eyebrow: '需求澄清', title: '先让 AI 找出需求缺口', detail: 'AI 会检查目标、范围、验收标准、证据和潜在风险。',
+51:       actionLabel: '开始需求检查', command: { kind: 'request-review', reviewKind: 'product-first' },
+52:     }
+53:     if (unanswered.length > 0) return {
+54:       eyebrow: '需要你的判断', title: `回答 ${unanswered.length} 个关键问题`, detail: '先处理会影响范围、规则或验收结果的问题，其余内容可以稍后核对。',
+55:       actionLabel: '继续回答', command: { kind: 'open', view: 'review' },
+56:     }
+57:     if (currentPatches.length > 0) return {
+58:       eyebrow: 'AI 已整理改动', title: `审核 ${currentPatches.length} 份正文修改`, detail: '确认改动符合你的判断后，再写入正式需求版本。',
+59:       actionLabel: '查看改动', command: { kind: 'open', view: 'patches' },
+60:     }
+61:     if (productBlockers.length > 0 || !completed('product-second')) return {
+62:       eyebrow: '答案已收集', title: '让 AI 把结论整理进正文', detail: 'AI 会复核你的回答，并生成可逐项审核的正文修改。',
+63:       actionLabel: '整理正文改动', command: { kind: 'request-review', reviewKind: 'product-second' },
+64:     }
+65:     return {
+66:       eyebrow: '产品澄清完成', title: '进入产品确认', detail: '当前版本没有产品侧阻塞问题，下一步由产品负责人确认内容。',
+67:       actionLabel: '进入产品确认', command: { kind: 'advance' },
+68:     }
+69:   }
+70: 
+71:   if (requirement.stage === 'product-confirmation') {
+72:     if (!productConfirmed) return {
+73:       eyebrow: '产品确认', title: '确认当前需求版本', detail: participantRole === 'product' ? '确认目标、范围、业务规则和验收标准准确反映了产品决策。' : '需要一位产品角色确认当前版本后才能继续。',
+74:       actionLabel: participantRole === 'product' ? '确认当前版本' : '等待产品确认', command: participantRole === 'product' ? { kind: 'confirm', role: 'product' } : { kind: 'none' },
+75:       ...(participantRole === 'product' ? {} : { disabled: true, disabledReason: '当前身份是研发，需由产品角色完成确认。' }),
+76:     }
+77:     return {
+78:       eyebrow: '产品已确认', title: '邀请研发共同检查', detail: '产品结论已经锁定到当前版本，可以进入研发可行性和测试约束检查。',
+79:       actionLabel: '进入产研共审', command: { kind: 'advance' },
+80:     }
+81:   }
+82: 
+83:   if (requirement.stage === 'joint-review') {
+84:     if (!completed('engineering-precheck')) return {
+85:       eyebrow: '产研共审', title: '从研发视角检查可实施性', detail: '重点检查现有实现、影响范围、兼容性和测试落点。',
+86:       actionLabel: '开始研发检查', command: { kind: 'request-review', reviewKind: 'engineering-precheck' },
+87:     }
+88:     if (unanswered.length > 0) return {
+89:       eyebrow: '研发发现待确认项', title: `处理 ${unanswered.length} 个阻塞问题`, detail: '这些问题会影响实现或验收，需要在交付研发前明确。',
+90:       actionLabel: '继续处理', command: { kind: 'open', view: 'review' },
+91:     }
+92:     if (currentPatches.length > 0) return {
+93:       eyebrow: '研发建议了改动', title: `审核 ${currentPatches.length} 份正文修改`, detail: '确认实现约束和测试条件已准确写回需求。',
+94:       actionLabel: '查看改动', command: { kind: 'open', view: 'patches' },
+95:     }
+96:     if (blockers.length > 0) return {
+97:       eyebrow: '仍有待收敛内容', title: '复核已回复的问题', detail: '已有回复尚未消除阻塞，请重新检查或让 AI 根据结论更新正文。',
+98:       actionLabel: '查看问题', command: { kind: 'open', view: 'review' },
+99:     }
+100:     if (failedChecks.length > 0) return {
+101:       eyebrow: '交付条件未齐', title: `补齐 ${failedChecks.length} 项需求内容`, detail: '完成条件会指出正文缺少的目标、范围、验收标准或测试约束。',
+102:       actionLabel: '查看缺少内容', command: { kind: 'open', view: 'ready' },
+103:     }
+104:     if (!productConfirmed) return {
+105:       eyebrow: '等待角色确认', title: '请产品确认当前版本', detail: participantRole === 'product' ? '正文已通过检查，确认它准确反映最终产品结论。' : '需要产品角色确认同一个当前版本。',
+
+### 311b9f7f06af433acef032acd913ef93adea53fe:src/engine.ts:310-328
+310:     } else if (action.kind === 'confirmation.create') {
+311:       requireHuman(action.participant)
+312:       if (action.participant.role !== action.role) throw new Error(`${action.role} role is required`)
+313:       record.confirmations.push({ id: randomUUID(), requirementId: record.id, commit: record.currentCommit, role: action.role, participant: action.participant, scope: action.scope, ...(action.scopeId === undefined ? {} : { scopeId: action.scopeId }), status: 'active', createdAt: now })
+314:       if (action.role === 'product' && action.scope === 'version') record.productConfirmedCommit = record.currentCommit
+315:       if (action.role === 'engineering' && action.scope === 'version') record.jointConfirmedCommit = record.currentCommit
+316:       this.persist()
+317:     } else if (action.kind === 'stage.advance') {
+318:       requireHuman(action.participant)
+319:       advance(record, action.participant); this.persist()
+320:     } else if (action.kind === 'ready.generate') {
+321:       requireHuman(action.participant)
+322:       const checks = readiness(this.versions.read(record.id, record.currentCommit).markdown, record)
+323:       if (record.stage !== 'joint-review' || checks.some(check => !check.passed)) throw new Error('readiness gate is not satisfied')
+324:       if (!hasVersionConfirmation(record, 'product') || !hasVersionConfirmation(record, 'engineering')) throw new Error('current version needs product and engineering confirmation')
+325:       const markdown = readyMarkdown(this.view(record.id))
+326:       record.readyPackage = { requirementId: record.id, commit: record.currentCommit, packageHash: createHash('sha256').update(markdown).digest('hex'), generatedAt: now, generatedBy: action.participant, markdown }
+327:       enterStage(record, 'ready'); this.persist()
+328:     } else if (action.kind === 'participant.register') {
+
+### 311b9f7f06af433acef032acd913ef93adea53fe:tests/engine.spec.ts:322-335
+322:   it('passes the six-part gate only for the exact jointly confirmed commit', async () => {
+323:     const engine = setup(); let view = create(engine)
+324:     const saved = engine.apply('save', { kind: 'version.save', participant: product, requirementId: view.id, baseCommit: view.currentCommit, markdown: readyMarkdown(view), summary: 'Complete Ready inputs' }); if (!saved.ok) throw new Error(saved.error); view = saved.requirement
+325:     engine.apply('review', { kind: 'review.request', participant: product, requirementId: view.id, reviewKind: 'product-second' }); await Promise.resolve()
+326:     const run = engine.view(view.id).aiRuns.find(item => item.kind === 'product-second')!
+327:     engine.submitReview({ requirementId: view.id, commit: view.currentCommit, runId: run.id, ai, maturitySummary: '可进入确认', items: [] })
+328:     expect(engine.apply('to-confirm', { kind: 'stage.advance', participant: product, requirementId: view.id }).ok).toBe(true)
+329:     expect(engine.apply('product-confirm', { kind: 'confirmation.create', participant: product, requirementId: view.id, role: 'product', scope: 'version' }).ok).toBe(true)
+330:     expect(engine.apply('to-joint', { kind: 'stage.advance', participant: product, requirementId: view.id }).ok).toBe(true)
+331:     expect(engine.apply('engineering-confirm', { kind: 'confirmation.create', participant: engineering, requirementId: view.id, role: 'engineering', scope: 'version' }).ok).toBe(true)
+332:     const ready = engine.apply('ready', { kind: 'ready.generate', participant: product, requirementId: view.id })
+333:     expect(ready.ok).toBe(true)
+334:     if (ready.ok) expect(ready.requirement).toMatchObject({ stage: 'ready', readyPackage: { commit: view.currentCommit } })
+335:   })

@@ -1,0 +1,76 @@
+## host.log
+dsh web: http://127.0.0.1:53386
+file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh-app-boot/0.1.1-rc.2/00492d62946dd83c48a90b4b245df6b9ab95c67ef21584649d36f08d4a6be2b2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:764
+	if (hmr === void 0) throw new Error(`${binName}: user patch-layer watching requires the Cordis HMR service`);
+	                          ^
+
+Error: dsh: user patch-layer watching requires the Cordis HMR service
+    at watchUserPatches (file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh-app-boot/0.1.1-rc.2/00492d62946dd83c48a90b4b245df6b9ab95c67ef21584649d36f08d4a6be2b2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:764:28)
+    at runProfile (file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh/0.1.1-rc.1/fa733618e5ca1a16ee8666a0939acd7e9385adfc47e0c57742f3c68653d9dc57/node_modules/@deepseek-ai/dsh/lib/profile-boot-DG5t9aNs.js:264:9)
+    at async file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh/0.1.1-rc.1/fa733618e5ca1a16ee8666a0939acd7e9385adfc47e0c57742f3c68653d9dc57/node_modules/@deepseek-ai/dsh/lib/bin.js:133:3
+
+Node.js v24.21.0
+
+
+## host-hmr.log
+dsh web: http://127.0.0.1:53758
+file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh-app-boot/0.1.1-rc.2/00492d62946dd83c48a90b4b245df6b9ab95c67ef21584649d36f08d4a6be2b2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:767
+	const register = hmr.registerConfig(filename, async () => {
+	                     ^
+
+TypeError: hmr.registerConfig is not a function
+    at watchUserPatches (file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh-app-boot/0.1.1-rc.2/00492d62946dd83c48a90b4b245df6b9ab95c67ef21584649d36f08d4a6be2b2/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:767:23)
+    at runProfile (file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh/0.1.1-rc.1/fa733618e5ca1a16ee8666a0939acd7e9385adfc47e0c57742f3c68653d9dc57/node_modules/@deepseek-ai/dsh/lib/profile-boot-DG5t9aNs.js:264:9)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///Users/zhongxin/Library/pnpm/store/v11/links/@deepseek-ai/dsh/0.1.1-rc.1/fa733618e5ca1a16ee8666a0939acd7e9385adfc47e0c57742f3c68653d9dc57/node_modules/@deepseek-ai/dsh/lib/bin.js:133:3
+
+Node.js v24.21.0
+
+
+## host-pinned.log
+dsh web: http://127.0.0.1:54291
+file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh-app-boot@0.1.1-rc.1_1f7795b54506e8f2cc617b23016e0027/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:764
+	if (hmr === void 0) throw new Error(`${binName}: user patch-layer watching requires the Cordis HMR service`);
+	                          ^
+
+Error: dsh: user patch-layer watching requires the Cordis HMR service
+    at watchUserPatches (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh-app-boot@0.1.1-rc.1_1f7795b54506e8f2cc617b23016e0027/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:764:28)
+    at runProfile (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh@0.1.1-rc.1_279f7a451ed319da8c8befceb96fc495/node_modules/@deepseek-ai/dsh/lib/profile-boot-DG5t9aNs.js:264:9)
+    at async file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh@0.1.1-rc.1_279f7a451ed319da8c8befceb96fc495/node_modules/@deepseek-ai/dsh/lib/bin.js:133:3
+
+Node.js v24.21.0
+
+
+## host-official-boot-v2.log
+dsh web: http://127.0.0.1:54990
+file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh-app-boot@0.1.1-rc.1_1f7795b54506e8f2cc617b23016e0027/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1187
+		throw new Error(`${binName}: ${stage}: ${detail}${stack}`, { cause });
+		      ^
+
+Error: dsh-ready-acceptance: plugin tree failed to load: dsh-ready-acceptance: 1 entry did not activate
+@deepseek-ai/dsh-agent-presets: ValidationError: invalid config:
+  - $.default missing required value (at default)
+    at resolveConfig (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+cordis@4.0.5_@deepseek-ai+cordis-plugin-include@1.0.10_@deepseek-ai+cordis-plugin-loader@1.0.6/node_modules/@deepseek-ai/cordis/lib/index.js:960:27)
+    at Fiber._resolveConfig (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+cordis@4.0.5_@deepseek-ai+cordis-plugin-include@1.0.10_@deepseek-ai+cordis-plugin-loader@1.0.6/node_modules/@deepseek-ai/cordis/lib/index.js:1347:25)
+    at Fiber._reload (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+cordis@4.0.5_@deepseek-ai+cordis-plugin-include@1.0.10_@deepseek-ai+cordis-plugin-loader@1.0.6/node_modules/@deepseek-ai/cordis/lib/index.js:1355:24)
+    at Module.boot (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh-app-boot@0.1.1-rc.1_1f7795b54506e8f2cc617b23016e0027/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1187:9)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/acceptance-boot.mjs:19:13 {
+  [cause]: Error: dsh-ready-acceptance: 1 entry did not activate
+  @deepseek-ai/dsh-agent-presets: ValidationError: invalid config:
+    - $.default missing required value (at default)
+      at resolveConfig (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+cordis@4.0.5_@deepseek-ai+cordis-plugin-include@1.0.10_@deepseek-ai+cordis-plugin-loader@1.0.6/node_modules/@deepseek-ai/cordis/lib/index.js:960:27)
+      at Fiber._resolveConfig (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+cordis@4.0.5_@deepseek-ai+cordis-plugin-include@1.0.10_@deepseek-ai+cordis-plugin-loader@1.0.6/node_modules/@deepseek-ai/cordis/lib/index.js:1347:25)
+      at Fiber._reload (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+cordis@4.0.5_@deepseek-ai+cordis-plugin-include@1.0.10_@deepseek-ai+cordis-plugin-loader@1.0.6/node_modules/@deepseek-ai/cordis/lib/index.js:1355:24)
+      at assertEntriesActivated (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh-app-boot@0.1.1-rc.1_1f7795b54506e8f2cc617b23016e0027/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1134:9)
+      at async Module.boot (file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/node_modules/.pnpm/@deepseek-ai+dsh-app-boot@0.1.1-rc.1_1f7795b54506e8f2cc617b23016e0027/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:1179:3)
+      at async file:///private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/dsh-ready-live-20261027-bf_r4cso/runtime/acceptance-boot.mjs:19:13
+}
+
+Node.js v24.21.0
+
+
+## host-official-boot-v3.log
+dsh web: http://127.0.0.1:55169
+{"acceptanceBoot":"official boot and profile composition; CLI user-config watcher omitted","dshVersion":"0.1.1-rc.1","apiProxyAvailable":true}
+

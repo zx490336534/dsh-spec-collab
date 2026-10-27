@@ -1,0 +1,28 @@
+
+> dsh-spec-collab@0.3.0 test /Users/zhongxin/dsh-spec-collab
+> vitest run --maxWorkers=1 --minWorkers=1 --exclude tests/e2e/**
+
+
+ RUN  v3.2.7 /Users/zhongxin/dsh-spec-collab
+
+ ✓ tests/engine.spec.ts (34 tests) 5449ms
+   ✓ CollaborationEngine > renames, archives, restores, and deletes a requirement  327ms
+   ✓ CollaborationEngine > restores historical content by creating a new commit  318ms
+ ✓ tests/ready-admission.spec.ts (11 tests) 2639ms
+ ✓ tests/git-store.spec.ts (6 tests) 1120ms
+ ✓ tests/workspace-context.spec.ts (2 tests) 15ms
+ ✓ tests/review-runtime.spec.ts (2 tests) 5ms
+ ✓ tests/workflow.spec.ts (9 tests) 6ms
+ ✓ tests/structured-diff.spec.ts (2 tests) 3ms
+ ✓ tests/review-context.spec.ts (3 tests) 3ms
+ ✓ tests/prompts.spec.ts (3 tests) 2ms
+ ✓ tests/review-checklist.spec.tsx (7 tests) 156ms
+ ✓ tests/browser-compat.spec.ts (8 tests) 28ms
+ ✓ tests/review-anchors.spec.ts (5 tests) 15ms
+ ✓ tests/client-utilities.spec.ts (7 tests) 13ms
+
+ Test Files  13 passed (13)
+      Tests  99 passed (99)
+   Start at  09:48:21
+   Duration  14.11s (transform 524ms, setup 0ms, collect 1.16s, tests 9.46s, environment 1.06s, prepare 555ms)
+

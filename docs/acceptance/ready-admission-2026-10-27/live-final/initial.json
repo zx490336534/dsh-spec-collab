@@ -1,0 +1,262 @@
+{
+  "revision": 19,
+  "participants": [
+    {
+      "participantId": "live-ready-product",
+      "nickname": "验收产品",
+      "role": "product",
+      "kind": "human"
+    },
+    {
+      "participantId": "live-ready-engineering",
+      "nickname": "验收研发",
+      "role": "engineering",
+      "kind": "human"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "隔离验收-超时重试需求-49bb25b0",
+      "title": "隔离验收：超时重试需求",
+      "stage": "joint-review",
+      "currentCommit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+      "workspaceId": "6dade168-f58f-469c-9686-16e775141f27",
+      "updatedAt": 1793067973052,
+      "metrics": {
+        "openReviewCount": 0,
+        "openCommentCount": 0,
+        "pendingActionCount": 0,
+        "activeDecisionCount": 0,
+        "riskCount": 0,
+        "insightCount": 0,
+        "customerImportanceScore": 0,
+        "customerCount": 0,
+        "companyCount": 0,
+        "anonymousInsightCount": 0
+      },
+      "participantIds": [
+        "live-ready-product",
+        "live-ready-engineering"
+      ]
+    }
+  ],
+  "requirement": {
+    "id": "隔离验收-超时重试需求-49bb25b0",
+    "title": "隔离验收：超时重试需求",
+    "stage": "joint-review",
+    "stageCycle": 2,
+    "currentCommit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+    "workspaceId": "6dade168-f58f-469c-9686-16e775141f27",
+    "sources": [
+      {
+        "id": "fixture-code",
+        "sourceType": "code-scope",
+        "label": "隔离项目现有重试预算",
+        "stableId": "src/submission.ts",
+        "version": "fcf74a7cd303ce0fe3c35a332acb0ca3025a34b5",
+        "accessStatus": "available"
+      }
+    ],
+    "reviewItems": [],
+    "comments": [],
+    "patches": [],
+    "decisions": [],
+    "confirmations": [
+      {
+        "id": "42aed2a3-080b-4ac7-90cd-309b79b52313",
+        "requirementId": "隔离验收-超时重试需求-49bb25b0",
+        "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+        "role": "product",
+        "participant": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "scope": "version",
+        "status": "active",
+        "createdAt": 1793067973127
+      },
+      {
+        "id": "0ad4e548-6a42-475c-8d47-1fbfc768810b",
+        "requirementId": "隔离验收-超时重试需求-49bb25b0",
+        "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+        "role": "engineering",
+        "participant": {
+          "participantId": "live-ready-engineering",
+          "nickname": "验收研发",
+          "role": "engineering",
+          "kind": "human"
+        },
+        "scope": "version",
+        "status": "active",
+        "createdAt": 1793067973127
+      }
+    ],
+    "actionItems": [],
+    "aiRuns": [
+      {
+        "id": "90c38716-c0ef-4d98-8c8b-1750eecfa3f4",
+        "requirementId": "隔离验收-超时重试需求-49bb25b0",
+        "commit": "c67d17a5ed31cc6f7d4fb486069c0e87f84a747d",
+        "kind": "product-first",
+        "status": "running",
+        "requestedBy": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "createdAt": 1793067973036,
+        "updatedAt": 1793067973052,
+        "sessionId": "synthetic-setup"
+      },
+      {
+        "id": "6911d402-fdf4-4b2b-aa9c-ccfbc1b4c5ae",
+        "requirementId": "隔离验收-超时重试需求-49bb25b0",
+        "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+        "kind": "change-review",
+        "status": "completed",
+        "requestedBy": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "createdAt": 1793067973122,
+        "updatedAt": 1793067973125,
+        "sessionId": "synthetic-setup",
+        "maturitySummary": "合成测试前置审核，不代表真实模型已执行。"
+      },
+      {
+        "id": "ccf81b8b-43c8-43b5-90fe-955ca6163b05",
+        "requirementId": "隔离验收-超时重试需求-49bb25b0",
+        "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+        "kind": "product-first",
+        "status": "completed",
+        "requestedBy": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "createdAt": 1793067973123,
+        "updatedAt": 1793067973126,
+        "sessionId": "synthetic-setup",
+        "maturitySummary": "合成测试前置审核，不代表真实模型已执行。"
+      },
+      {
+        "id": "947353ab-deee-4ee5-b25a-0e8c8fe408fb",
+        "requirementId": "隔离验收-超时重试需求-49bb25b0",
+        "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+        "kind": "product-second",
+        "status": "completed",
+        "requestedBy": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "createdAt": 1793067973124,
+        "updatedAt": 1793067973126,
+        "sessionId": "synthetic-setup",
+        "maturitySummary": "合成测试前置审核，不代表真实模型已执行。"
+      }
+    ],
+    "aiConversations": [
+      {
+        "stage": "product-review",
+        "stageCycle": 0,
+        "sessionId": "synthetic-setup",
+        "createdAt": 1793067973052,
+        "updatedAt": 1793067973125
+      }
+    ],
+    "createdAt": 1793067972962,
+    "updatedAt": 1793067973052,
+    "productConfirmedCommit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+    "jointConfirmedCommit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+    "version": {
+      "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+      "parentCommit": "c67d17a5ed31cc6f7d4fb486069c0e87f84a747d",
+      "markdown": "# 隔离验收：超时重试需求\n\n## 原始需求与来源\n\n用户提交遇到网关超时后最多自动重试两次，并得到明确最终状态。原始需求为本次隔离验收准备。\n\n## 目标与用户结果\n\n提交遇到短暂网关超时时自动尝试恢复，并向用户返回明确成功或失败结果。\n\n## 范围与非范围\n\n范围为提交接口收到 GATEWAY_TIMEOUT 的重试行为；非范围为结算、鉴权、支付渠道及其他错误类型。\n\n## 业务术语与规则\n\n首次提交不计入重试次数，最多额外重试两次，仅适用于 GATEWAY_TIMEOUT。最终结果返回成功或明确失败，避免重复提交。\n现有实现的自动重试预算为 0；最多额外重试两次属于本次拟新增的需求，尚未实现。\n\n## 需求与验收标准\n\n- **AC-RETRY-001**：前提：网关连续超时；操作：提交一次；预期结果：首次请求后最多额外重试两次，然后显示明确失败。\n- **AC-RETRY-002**：前提：首次超时后下一次提交成功；操作：提交一次；预期结果：重试成功后停止请求并显示成功。\n\n## 测试约束\n\n使用隔离的本地网关 fixture 控制超时和成功次数；仅用验收账号，不连接生产支付渠道，不把实现和测试执行状态写成已完成。\n",
+      "author": {
+        "participantId": "live-ready-product",
+        "nickname": "验收产品",
+        "role": "product",
+        "kind": "human"
+      },
+      "summary": "合成前置：补齐结构化 Ready 正文",
+      "createdAt": 1793067973000
+    },
+    "history": [
+      {
+        "commit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+        "parentCommit": "c67d17a5ed31cc6f7d4fb486069c0e87f84a747d",
+        "author": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "summary": "合成前置：补齐结构化 Ready 正文",
+        "createdAt": 1793067973000
+      },
+      {
+        "commit": "c67d17a5ed31cc6f7d4fb486069c0e87f84a747d",
+        "author": {
+          "participantId": "live-ready-product",
+          "nickname": "验收产品",
+          "role": "product",
+          "kind": "human"
+        },
+        "summary": "Create requirement",
+        "createdAt": 1793067972000
+      }
+    ],
+    "readiness": [
+      {
+        "key": "goal",
+        "passed": true,
+        "reasons": []
+      },
+      {
+        "key": "acceptance",
+        "passed": true,
+        "reasons": []
+      },
+      {
+        "key": "scope",
+        "passed": true,
+        "reasons": []
+      },
+      {
+        "key": "semantics",
+        "passed": true,
+        "reasons": []
+      },
+      {
+        "key": "evidence",
+        "passed": true,
+        "reasons": []
+      },
+      {
+        "key": "test-constraints",
+        "passed": true,
+        "reasons": []
+      }
+    ],
+    "metrics": {
+      "openReviewCount": 0,
+      "openCommentCount": 0,
+      "pendingActionCount": 0,
+      "activeDecisionCount": 0,
+      "riskCount": 0,
+      "insightCount": 0,
+      "customerImportanceScore": 0,
+      "customerCount": 0,
+      "companyCount": 0,
+      "anonymousInsightCount": 0
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "checkedAt": "2026-10-27T02:36:19.119Z",
+  "evidenceCommit": "fcf74a7cd303ce0fe3c35a332acb0ca3025a34b5",
+  "sourceMatchesGitObject": true,
+  "readmeMatchesGitObject": true,
+  "worktreeClean": true,
+  "sourceSha256": "a54230324c1c341f86a1af648ec5618a8294479b6fcfb8c2764cd697d538ba9e",
+  "readmeSha256": "15910598aa85e4290068715680843e1f59dedbb51e6fb3c558679c9ef43b0f08",
+  "sourceText": "export const existingRetryBudget = 0\nexport const timeoutCode = \"GATEWAY_TIMEOUT\"\n",
+  "initialSpecCommit": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+  "initialSpecAssertions": {
+    "mentionsAvoidingDuplicateSubmission": true,
+    "definesSubmissionId": false,
+    "defines1000msOr3000ms": false
+  },
+  "judgments": [
+    {
+      "claim": "源码声明 existingRetryBudget = 0 和 timeoutCode = \"GATEWAY_TIMEOUT\"",
+      "supported": true,
+      "scope": "只证明常量声明，不能证明实际网络重试或服务端幂等行为。"
+    },
+    {
+      "claim": "原 Spec 未定义超时后重复业务记录和迟到响应的最终判断规则",
+      "supported": true,
+      "scope": "原文仅提出避免重复提交，AC 仅覆盖次数和界面结果；模型将能力不足归为 TO_VERIFY。"
+    },
+    {
+      "claim": "最多两次的文案留下持续超时时是否用满次数的解释空间",
+      "supported": true,
+      "scope": "属于 INFERENCE 的语义判断，不是现有实现事实。"
+    }
+  ],
+  "finalSpecFactCheck": {
+    "commit": "9b5a4eee6b1936e8de3ef15c3371381d126050e2",
+    "toolReadCallSeq": 2933,
+    "toolReadResultSeq": 2934,
+    "stateSnapshot": "refinement-requested.json",
+    "supportsRulePresence": true,
+    "supportsOldConfirmationsInvalidated": true,
+    "supportsActiveDecision": true,
+    "supportsNoCurrentVersionConfirmationAtReviewTime": true
+  },
+  "parentRelation": {
+    "checkedBy": "independent Git verification after the model declared its tool limitation",
+    "current": "9b5a4eee6b1936e8de3ef15c3371381d126050e2",
+    "parent": "d12cf52e961bf6aa929e88b0dcb8ebbe700bc912",
+    "verified": true,
+    "doesNotProveAiReadTheDiff": true
+  }
+}

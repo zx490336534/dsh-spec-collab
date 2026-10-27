@@ -1,0 +1,8 @@
+overrides:
+  '@deepseek-ai/dsh-app-boot': 0.1.1-rc.1
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  koffi: true
+  node-pty: true
+  protobufjs: true

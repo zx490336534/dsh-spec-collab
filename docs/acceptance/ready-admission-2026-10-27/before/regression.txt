@@ -1,0 +1,221 @@
+
+ RUN  v3.2.7 /private/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/ready-admission-baseline-G2Vgxx
+
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects generation without engineering precheck even when both roles confirmed and all six checks pass 252ms
+   → expected { ok: true, revision: 21, …(1) } to match object { ok: false, …(1) }
+(26 matching properties omitted from actual)
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is queued 228ms
+   → expected { ok: true, revision: 22, …(1) } to match object { ok: false }
+(26 matching properties omitted from actual)
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is running 211ms
+   → expected { ok: true, revision: 23, …(1) } to match object { ok: false }
+(26 matching properties omitted from actual)
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is failed 265ms
+   → expected { ok: true, revision: 24, …(1) } to match object { ok: false }
+(26 matching properties omitted from actual)
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an old engineering precheck after the body changes, even if both roles reconfirm 351ms
+   → expected { ok: true, revision: 33, …(1) } to match object { ok: false, …(1) }
+(26 matching properties omitted from actual)
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > allows a completed current precheck and binds the package to that commit 229ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > requires both roles to reconfirm after a body change and a new precheck 336ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects late submissions for an old commit rather than completing a current precheck 574ms
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > does not generate while a new review is running after an earlier successful precheck 229ms
+   → expected true to be false // Object.is equality
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > requires a pending candidate patch to be accepted or rejected before generation 218ms
+   → expected true to be false // Object.is equality
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > preserves a delayed review launch after a rejected Ready action 306ms
+   → expected true to be false // Object.is equality
+ × tests/ready-admission.spec.ts > Ready admission through the public engine actions > enforces the same rule through the HTTP action route and succeeds after precheck completion 246ms
+   → expected 200 to be 400 // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 3 passed (12)
+   Start at  10:19:16
+   Duration  3.79s (transform 141ms, setup 0ms, collect 168ms, tests 3.45s, environment 0ms, prepare 47ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects generation without engineering precheck even when both roles confirmed and all six checks pass
+AssertionError: expected { ok: true, revision: 21, …(1) } to match object { ok: false, …(1) }
+(26 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "error": "engineering precheck is required for the current version",
+-   "ok": false,
++   "ok": true,
+  }
+
+ ❯ tests/ready-admission.spec.ts:85:20
+     83|     const before = engine.snapshot()
+     84|     const result = engine.apply('ready-without-precheck', { kind: 'rea…
+     85|     expect(result).toMatchObject({ ok: false, error: 'engineering prec…
+       |                    ^
+     86|     expect(engine.snapshot()).toEqual(before)
+     87|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is queued
+AssertionError: expected { ok: true, revision: 22, …(1) } to match object { ok: false }
+(26 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": false,
++   "ok": true,
+  }
+
+ ❯ tests/ready-admission.spec.ts:95:105
+     93|     if (status === 'failed') engine.markAiFailure(requirementId, engin…
+     94|     expect(engine.view(requirementId).aiRuns.at(-1)?.status).toBe(stat…
+     95|     expect(engine.apply(randomUUID(), { kind: 'ready.generate', partic…
+       |                                                                                                         ^
+     96|     expect(engine.view(requirementId).readyPackage).toBeUndefined()
+     97|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is running
+AssertionError: expected { ok: true, revision: 23, …(1) } to match object { ok: false }
+(26 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": false,
++   "ok": true,
+  }
+
+ ❯ tests/ready-admission.spec.ts:95:105
+     93|     if (status === 'failed') engine.markAiFailure(requirementId, engin…
+     94|     expect(engine.view(requirementId).aiRuns.at(-1)?.status).toBe(stat…
+     95|     expect(engine.apply(randomUUID(), { kind: 'ready.generate', partic…
+       |                                                                                                         ^
+     96|     expect(engine.view(requirementId).readyPackage).toBeUndefined()
+     97|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is failed
+AssertionError: expected { ok: true, revision: 24, …(1) } to match object { ok: false }
+(26 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": false,
++   "ok": true,
+  }
+
+ ❯ tests/ready-admission.spec.ts:95:105
+     93|     if (status === 'failed') engine.markAiFailure(requirementId, engin…
+     94|     expect(engine.view(requirementId).aiRuns.at(-1)?.status).toBe(stat…
+     95|     expect(engine.apply(randomUUID(), { kind: 'ready.generate', partic…
+       |                                                                                                         ^
+     96|     expect(engine.view(requirementId).readyPackage).toBeUndefined()
+     97|   })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an old engineering precheck after the body changes, even if both roles reconfirm
+AssertionError: expected { ok: true, revision: 33, …(1) } to match object { ok: false, …(1) }
+(26 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "error": "engineering precheck is required for the current version",
+-   "ok": false,
++   "ok": true,
+  }
+
+ ❯ tests/ready-admission.spec.ts:110:105
+    108|     }
+    109|     for (const participant of [product, engineering]) apply(engine, { …
+    110|     expect(engine.apply(randomUUID(), { kind: 'ready.generate', partic…
+       |                                                                                                         ^
+    111|   })
+    112| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > does not generate while a new review is running after an earlier successful precheck
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/ready-admission.spec.ts:155:108
+    153|     await Promise.resolve()
+    154|     expect(workflowState(engine.view(requirementId), 'product').disabl…
+    155|     expect(engine.apply(randomUUID(), { kind: 'ready.generate', partic…
+       |                                                                                                            ^
+    156|   })
+    157| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > requires a pending candidate patch to be accepted or rejected before generation
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/ready-admission.spec.ts:164:108
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > preserves a delayed review launch after a rejected Ready action
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/ready-admission.spec.ts:174:108
+    172|     apply(engine, { kind: 'review.request', participant: engineering, …
+    173|     const runId = engine.view(requirementId).aiRuns.at(-1)!.id
+    174|     expect(engine.apply(randomUUID(), { kind: 'ready.generate', partic…
+       |                                                                                                            ^
+    175|     release!('delayed-real-session')
+    176|     await Promise.resolve()
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/9]⎯
+
+ FAIL  tests/ready-admission.spec.ts > Ready admission through the public engine actions > enforces the same rule through the HTTP action route and succeeds after precheck completion
+AssertionError: expected 200 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 200
+
+ ❯ tests/ready-admission.spec.ts:191:29
+    189|     try {
+    190|       const denied = await generate()
+    191|       expect(denied.status).toBe(400)
+       |                             ^
+    192|       expect(await denied.json()).toMatchObject({ ok: false, error: 'e…
+    193|       await completeReview(engine, requirementId, 'engineering-prechec…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/9]⎯
+

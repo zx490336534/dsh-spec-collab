@@ -1,0 +1,7 @@
+{
+  "name": "dsh-ready-isolated-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@deepseek-ai/dsh": "0.1.1-rc.1" },
+  "pnpm": { "overrides": { "@deepseek-ai/dsh-app-boot": "0.1.1-rc.1" } }
+}

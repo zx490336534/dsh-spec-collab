@@ -1,0 +1,21 @@
+
+ RUN  v3.2.7 /Users/zhongxin/dsh-spec-collab
+
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects generation without engineering precheck even when both roles confirmed and all six checks pass 242ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is queued 233ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is running 211ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an engineering precheck that is failed 265ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects an old engineering precheck after the body changes, even if both roles reconfirm 352ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > allows a completed current precheck and binds the package to that commit 229ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > requires both roles to reconfirm after a body change and a new precheck 336ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > rejects late submissions for an old commit rather than completing a current precheck 575ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > does not generate while a new review is running after an earlier successful precheck 229ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > requires a pending candidate patch to be accepted or rejected before generation 219ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > preserves a delayed review launch after a rejected Ready action 304ms
+ ✓ tests/ready-admission.spec.ts > Ready admission through the public engine actions > enforces the same rule through the HTTP action route and succeeds after precheck completion 253ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  10:19:16
+   Duration  3.81s (transform 143ms, setup 0ms, collect 171ms, tests 3.45s, environment 0ms, prepare 59ms)
+

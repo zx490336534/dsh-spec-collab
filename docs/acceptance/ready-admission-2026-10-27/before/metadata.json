@@ -1,0 +1,23 @@
+{
+  "mode": "baseline-with-current-regression",
+  "commit": "311b9f7f06af433acef032acd913ef93adea53fe",
+  "cwd": "/var/folders/qj/9wrw3ghj5bbg_p0mwgl02yfc0000gn/T/ready-admission-baseline-G2Vgxx",
+  "startedAt": "2026-10-27T02:19:16.742Z",
+  "finishedAt": "2026-10-27T02:19:20.910Z",
+  "node": "v24.21.0",
+  "command": [
+    "/Users/zhongxin/.hermes/node/bin/node",
+    "/Users/zhongxin/dsh-spec-collab/node_modules/vitest/vitest.mjs",
+    "run",
+    "tests/ready-admission.spec.ts",
+    "--maxWorkers=1",
+    "--minWorkers=1",
+    "--reporter=verbose"
+  ],
+  "exitCode": 1,
+  "hashes": {
+    "src/engine.ts": "86c77bfac68d16cfcaa3f32670bde1a2fc73c6d045fe56a6d245288db77e745e",
+    "src/client/workflow.ts": "c7191016140c1ec0c62c463ebe5db66cd5af79f447012bd1f36c13f8c3b07031",
+    "tests/ready-admission.spec.ts": "56547b3f07d9c6be95d73dc69cb4a00d4c41812c4dcbae846b75ae883e354a3e"
+  }
+}

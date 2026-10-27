@@ -4,6 +4,7 @@ import { basename, dirname, extname, join } from 'node:path'
 import { GitRequirementStore, VersionConflictError } from './git-store.ts'
 import { SCHEMA_VERSION, type ActionItem, type ActionResult, type AiReviewRun, type CandidatePatch, type CollaborationAction, type CollaborationEvent, type CollaborationState, type CommentThread, type FeedbackSource, type Insight, type InsightImportance, type InsightLink, type MyActionItem, type MyItemCategory, type Notification, type ParticipantSnapshot, type ReadinessCheck, type RequirementMetrics, type RequirementRecord, type RequirementSummary, type RequirementVersion, type RequirementView, type ReviewItem, type ReviewKind, type SaveConflict, type StructuredDiff } from './protocol.ts'
 import { buildStructuredDiff } from './structured-diff.ts'
+import { hasCompletedCurrentReview, hasVersionConfirmation, readyAdmission } from './ready-admission.ts'
 
 export interface AiCoordinator {
   requestReview(input: { requirement: RequirementView; run: AiReviewRun; sessionId?: string }): Promise<string>
@@ -319,9 +320,8 @@ export class CollaborationEngine {
       advance(record, action.participant); this.persist()
     } else if (action.kind === 'ready.generate') {
       requireHuman(action.participant)
-      const checks = readiness(this.versions.read(record.id, record.currentCommit).markdown, record)
-      if (record.stage !== 'joint-review' || checks.some(check => !check.passed)) throw new Error('readiness gate is not satisfied')
-      if (!hasVersionConfirmation(record, 'product') || !hasVersionConfirmation(record, 'engineering')) throw new Error('current version needs product and engineering confirmation')
+      const admission = readyAdmission(record, readiness(this.versions.read(record.id, record.currentCommit).markdown, record))
+      if (admission.error) throw new Error(admission.error)
       const markdown = readyMarkdown(this.view(record.id))
       record.readyPackage = { requirementId: record.id, commit: record.currentCommit, packageHash: createHash('sha256').update(markdown).digest('hex'), generatedAt: now, generatedBy: action.participant, markdown }
       enterStage(record, 'ready'); this.persist()
@@ -465,7 +465,12 @@ export class CollaborationEngine {
     const requestedStage = record.stage; const requestedStageCycle = record.stageCycle
     const existingSession = record.aiConversations.find(item => item.stage === requestedStage && item.stageCycle === requestedStageCycle)?.sessionId
     void coordinator.requestReview({ requirement: view, run, ...(existingSession ? { sessionId: existingSession } : {}) }).then(sessionId => {
-      run.status = 'running'; run.sessionId = sessionId; run.updatedAt = Date.now(); this.rememberStageConversation(record, sessionId, requestedStage, requestedStageCycle); this.persist({ types: ['ai.status', 'metrics.changed'], requirementId: record.id, objectId: run.id })
+      // Rejected actions restore a cloned state while this launch can still be pending.
+      const currentRecord = this.state.requirements.find(item => item.id === record.id)
+      const currentRun = currentRecord?.aiRuns.find(item => item.id === run.id)
+      if (currentRecord === undefined || currentRun === undefined) return
+      if (currentRun.status === 'queued') currentRun.status = 'running'
+      currentRun.sessionId = sessionId; currentRun.updatedAt = Date.now(); this.rememberStageConversation(currentRecord, sessionId, requestedStage, requestedStageCycle); this.persist({ types: ['ai.status', 'metrics.changed'], requirementId: currentRecord.id, objectId: currentRun.id })
     }, error => this.markAiFailure(record.id, run.id, error instanceof Error ? error.message : String(error)))
   }
 
@@ -715,7 +720,6 @@ function assertChineseFeedback(...values: string[]): void {
 }
 function requireHuman(participant: ParticipantSnapshot): void { if (participant.kind !== 'human') throw new Error('human participant is required') }
 function actionForReview(item: ReviewItem): ActionItem { const now = Date.now(); return { id: randomUUID(), requirementId: item.requirementId, sourceType: 'review-item', sourceId: item.id, type: 'reply', assigneeRole: item.ownerRole, blocking: item.severity === 'blocking', status: 'pending', dueStage: item.reviewKind.startsWith('product') ? 'product-review' : 'joint-review', createdAt: now, updatedAt: now } }
-function hasVersionConfirmation(record: RequirementRecord, role: 'product' | 'engineering'): boolean { return record.confirmations.some(item => item.role === role && item.scope === 'version' && item.commit === record.currentCommit && item.status === 'active') }
 function enterStage(record: RequirementRecord, stage: RequirementRecord['stage']): void {
   if (record.stage === stage) return
   record.stage = stage
@@ -724,7 +728,7 @@ function enterStage(record: RequirementRecord, stage: RequirementRecord['stage']
 function advance(record: RequirementRecord, participant: ParticipantSnapshot): void {
   if (record.stage === 'product-review') {
     if (record.reviewItems.some(item => item.commit === record.currentCommit && item.severity === 'blocking' && !['resolved', 'non-blocking-verify', 'joint-review'].includes(item.status))) throw new Error('product blocking review items remain')
-    if (!record.aiRuns.some(run => run.kind === 'product-second' && run.commit === record.currentCommit && run.status === 'completed')) throw new Error('product second review is required')
+    if (!hasCompletedCurrentReview(record, 'product-second')) throw new Error('product second review is required')
     enterStage(record, 'product-confirmation'); return
   }
   if (record.stage === 'product-confirmation') {
