@@ -7,27 +7,23 @@ DeepSeek Harness 的需求“编辑校样台”，用于把原始需求澄清为
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
-当前版本为 `v0.3.1`，兼容 DeepSeek Harness `v0.1.1-rc.1`。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；DSH 精简侧栏仅显示“设置”时，也会正常挂载“需求讨论”入口。
+当前版本为 `v0.4.0`，兼容 DeepSeek Harness `v0.2.1-rc.5`。DSH `v0.1.1-rc.1` 请继续使用插件 `v0.3.1`；两个版本使用不同的宿主接口。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；新版 DSH 从“插件”入口旁挂载“需求讨论”，旧版侧栏仍支持“技能中心 / 设置”入口。
 
-## 一键安装
+## 安装
 
-已有 Node.js 环境时，无需先全局安装 DSH CLI：
+可在 DSH 插件管理中选择“安装第三方插件”，输入 `dsh-spec-collab@0.4.0`。命令行安装可使用与宿主同版本的 CLI：
 
 ```sh
-npx -y @deepseek-ai/dsh@0.1.1-rc.1 plugin --profile web add dsh-spec-collab@latest
+npx -y @deepseek-ai/dsh@0.2.1-rc.5 plugin --profile desktop add dsh-spec-collab@0.4.0
 ```
 
 如果 `dsh` 已在 `PATH` 中，也可以使用简写：
 
 ```sh
-dsh plugin --profile web add dsh-spec-collab@latest
+dsh plugin --profile desktop add dsh-spec-collab@0.4.0
 ```
 
-安装后重启现有的 `dsh web` 进程。后续更新使用：
-
-```sh
-dsh plugin --profile web update dsh-spec-collab@latest
-```
+安装到当前正在使用的 profile 后，在插件管理中确认插件已启用；如界面提示需要重启，重启现有桌面应用或 `dsh web` 进程。后续更新仍通过同一 profile 安装明确兼容的版本。
 
 插件已经内置非安全 HTTP 环境所需的 UUID fallback，不需要通过代理向 HTML 注入 `crypto` polyfill。团队部署仍建议使用 HTTPS，并在 DSH 前配置认证。
 
@@ -98,7 +94,7 @@ dsh plugin --profile web update dsh-spec-collab@latest
 
 </details>
 
-## 当前能力（v0.3.1）
+## 当前能力（v0.4.0）
 
 ### 需求正文与版本
 
@@ -219,7 +215,8 @@ pnpm install
 pnpm run typecheck
 pnpm test
 pnpm run build
-dsh plugin --profile web add "link:$(pwd)"
+# 桌面应用使用 desktop；独立 dsh web 改为 web。
+dsh plugin --profile desktop add "link:$(pwd)"
 ```
 
 首次安装或 Host 代码变更后重启现有 `dsh web`。Client 开发时需在 DeepSeek Harness checkout 运行 `pnpm run dev:web`，插件侧运行 `pnpm run bundle --watch`，现有 GUI 的 client-plugin HMR 才会接收 bundle 更新。

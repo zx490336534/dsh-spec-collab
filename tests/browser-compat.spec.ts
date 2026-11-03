@@ -25,6 +25,20 @@ describe('browser compatibility', () => {
     expect(findSidebarAnchor(document)).toMatchObject({ placement: 'after', element: document.querySelector('[aria-label="技能中心"]') })
   })
 
+  it.each(['插件', 'Plugins'])('mounts after the current DSH %s panel entry without legacy settings', label => {
+    document.body.innerHTML = `<div role="group" aria-label="全局面板"><button aria-label="${label}">${label}</button><button>更多</button></div>`
+    const anchor = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+    expect(findSidebarAnchor(document)).toEqual({ placement: 'after', element: anchor })
+    const dispose = mountSidebarEntry()
+    try {
+      expect(anchor.nextElementSibling?.getAttribute('aria-label')).toBe('需求讨论')
+      document.querySelector<HTMLButtonElement>('[data-dsh-spec-collab-entry]')!.click()
+      expect(document.documentElement.hasAttribute('data-dsh-spec-collab-active')).toBe(true)
+    } finally {
+      dispose()
+    }
+  })
+
   it('falls back to placing the entry before settings', () => {
     document.body.innerHTML = '<button>新会话</button><button class="settings">设置</button>'
     expect(findSidebarAnchor(document)).toMatchObject({ placement: 'before', element: document.querySelector('.settings') })

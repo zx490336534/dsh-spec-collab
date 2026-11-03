@@ -1,8 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import Schema from 'schemastery'
-import type {} from '@deepseek-ai/dsh-host-apiproxy'
+import Schema from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -18,7 +17,7 @@ export { DEFAULT_REVIEW_PROMPTS, resolveReviewPrompts }
 export type { ReviewPromptConfig }
 
 export const name = 'spec-collab'
-export const inject = ['webServer', 'apiProxy', 'tools', 'systemPrompt']
+export const inject = ['webServer', 'sessionController', 'workspaceRegistry', 'agentPresets', 'tools', 'systemPrompt']
 export interface Config extends ReviewContextConfig { dataRoot?: string; repositoryPath?: string; prompts?: ReviewPromptConfig }
 
 const stringList = () => Schema.array(Schema.string()).default([])
@@ -56,8 +55,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   const contexts = new ReviewContextCatalog(config)
   const prompts = resolveReviewPrompts(config.prompts)
   const engine = new CollaborationEngine(join(dataRoot, 'collaboration-v3.json'), new GitRequirementStore(config.repositoryPath ?? join(dataRoot, 'repository')), { legacyPath: join(dataRoot, 'collaboration-v2.json') })
-  const coordinator = new DshReviewCoordinator(ctx.apiProxy, contexts, prompts)
+  const coordinator = new DshReviewCoordinator(ctx, contexts, prompts)
   engine.setCoordinator(coordinator)
+  ctx.effect(() => () => coordinator.dispose(), 'spec-collab: review lifetime')
   ctx.effect(() => { const disposers = makeRoutes(engine, coordinator).map(route => ctx.webServer.register(route)); return () => { for (const dispose of disposers) dispose() } }, 'spec-collab: routes')
   ctx.effect(() => { const disposers = allSpecTools(engine).map(tool => ctx.tools.register(tool)); return () => { for (const dispose of disposers) dispose() } }, 'spec-collab: tools')
   ctx.effect(() => ctx.systemPrompt.section({

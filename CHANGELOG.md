@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-11-03
+
+- Support DeepSeek Harness 0.2.1-rc.5 and declare its Host services as exact SDK peers. Older DSH 0.1.1-rc.1 installations must continue using plugin 0.3.1.
+- Replace the removed API proxy with the Session Controller, Workspace Registry and Agent Preset Registry. Use direct business results, request IDs and cancellable prompt delivery.
+- Read flat Session events through the current inspection API so review conversations and follow-ups remain visible.
+- Remove the retired client runtime dependency and the unused client Session injection; mount the workbench entry beside the current Plugins panel, including compact Chinese and English sidebars.
+- Align configuration schemas and the dependency lock with the current SDK, and cover the official compatibility gate, Host activation/disposal and review session integration.
+
 ## 0.3.1 — 2026-10-27
 
 - Enforce the same Ready admission rules in frontend guidance and the server: require a completed engineering precheck for the current commit, settled reviews and patches, passing readiness checks, and current version confirmations from both roles.

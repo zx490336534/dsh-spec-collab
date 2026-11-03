@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import type { DshReviewHost } from '../src/review-runtime.ts'
 import { DshReviewCoordinator } from '../src/review-runtime.ts'
 import { makeRoutes } from '../src/routes.ts'
 import { describe, expect, it } from 'vitest'
@@ -181,7 +181,7 @@ describe('Ready admission through the public engine actions', () => {
   it('enforces the same rule through the HTTP action route and succeeds after precheck completion', async () => {
     const { engine, requirementId } = await jointReview()
     // This action does not use the coordinator; constructing the real adapter avoids a second admission implementation.
-    const route = makeRoutes(engine, new DshReviewCoordinator({} as ApiProxy)).find(item => item.path === '/api/spec-collab/action')!
+    const route = makeRoutes(engine, new DshReviewCoordinator({} as DshReviewHost)).find(item => item.path === '/api/spec-collab/action')!
     const server = createServer((req, res) => { void route.handler(req, res) })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/spec-collab/action`

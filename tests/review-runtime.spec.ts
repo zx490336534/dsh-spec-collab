@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
+import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
+import type { DshReviewHost } from '../src/review-runtime.ts'
 import type { AiReviewRun, CommentThread, RequirementView } from '../src/protocol.ts'
 import { ReviewContextCatalog } from '../src/review-context.ts'
 import { DshReviewCoordinator } from '../src/review-runtime.ts'
@@ -9,16 +10,23 @@ describe('DshReviewCoordinator context mounting', () => {
     const createdWith: Array<Record<string, unknown>> = []
     const prompts: string[] = []
     let sessionNumber = 0
-    const success = (value: unknown) => ({ result: { ok: true, value } })
+    const requestIds: string[] = []
     const api = {
-      agentPresets: { list: async () => success({ presets: [{ id: 'spec-payments' }], authorable: false, hasDocument: false }) },
-      workspace: { list: async () => success({ items: [{ workspaceId: 'workspace-payments', title: '支付工程', path: '/work/payments', sessionIds: [], createdAt: '', updatedAt: '' }, { workspaceId: 'workspace-growth', title: '增长工程', path: '/work/growth', sessionIds: [], createdAt: '', updatedAt: '' }], archivedSessionIds: [] }) },
-      sessions: {
-        create: async (request: { payload: Record<string, unknown> }) => { createdWith.push(request.payload); sessionNumber += 1; return success({ sessionId: `session-${sessionNumber}`, agentPreset: request.payload.agentPreset }) },
-        rename: async () => success({ title: 'review', seq: 1 }),
-        prompt: async (request: { payload: { content: Array<{ text: string }> } }) => { prompts.push(request.payload.content[0]!.text); return success({}) },
+      agentPresets: { list: async () => [{ id: 'spec-payments' }] },
+      workspaceRegistry: { list: () => [{ id: 'workspace-payments', title: '支付工程', path: '/work/payments' }, { id: 'workspace-growth', title: '增长工程', path: '/work/growth' }] },
+      sessionController: {
+        create: async (request: Record<string, unknown>) => { createdWith.push(request); sessionNumber += 1; return { sessionId: `session-${sessionNumber}`, agentPreset: request.agentPreset } },
+        rename: async () => ({ title: 'review', seq: 1 }),
+        prompt: async (request: SessionPromptRequest, signal: AbortSignal) => {
+          expect(signal.aborted).toBe(false)
+          expect(request.mode).toBe('queue')
+          expect(request.content[0]?.type).toBe('text')
+          requestIds.push(request.requestId)
+          prompts.push((request.content[0] as { text: string }).text)
+          return { accepted: true }
+        },
       },
-    } as unknown as ApiProxy
+    } as unknown as DshReviewHost
     const contexts = new ReviewContextCatalog({
       defaultContext: { skills: ['requirements-review'], mcpServers: ['confluence'], documentPaths: ['/docs/shared'] },
       workspaces: [{ workspaceId: 'workspace-payments', skills: ['payment-domain'], mcpServers: ['payments'], documentPaths: ['/docs/payments'], agentPreset: 'spec-payments' }],
@@ -34,6 +42,9 @@ describe('DshReviewCoordinator context mounting', () => {
 
     expect(createdWith).toEqual([{ workspaceId: 'workspace-payments', agentPreset: 'spec-payments' }])
     expect(prompts).toHaveLength(2)
+    expect(requestIds).toHaveLength(2)
+    expect(new Set(requestIds).size).toBe(2)
+    expect(requestIds.every(id => id.startsWith('spec-collab-'))).toBe(true)
     expect(prompts[0]).toContain('`requirements-review`')
     expect(prompts[0]).toContain('`payment-domain`')
     expect(prompts[0]).toContain('`mcp__confluence__*`')
@@ -62,25 +73,47 @@ describe('DshReviewCoordinator context mounting', () => {
     expect(createdWith).toHaveLength(2)
   })
 
+  it('propagates host errors and cancels pending calls when the plugin is disposed', async () => {
+    const hostError = new Error('session/model-unavailable')
+    let signal: AbortSignal | undefined
+    const api = {
+      sessionController: {
+        prompt: async (_request: SessionPromptRequest, currentSignal: AbortSignal) => {
+          signal = currentSignal
+          currentSignal.throwIfAborted()
+          throw hostError
+        },
+      },
+    } as unknown as DshReviewHost
+    const coordinator = new DshReviewCoordinator(api)
+    await expect(coordinator.followUp('session-failed', '继续审核')).rejects.toBe(hostError)
+    expect(signal?.aborted).toBe(false)
+    coordinator.dispose()
+    expect(signal?.aborted).toBe(true)
+    await expect(coordinator.followUp('session-failed', '继续审核')).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
   it('uses configured prompt overrides while preserving defaults for omitted prompts', async () => {
     const prompts: string[] = []
-    const success = (value: unknown) => ({ result: { ok: true, value } })
     const api = {
-      workspace: { list: async () => success({ items: [{ workspaceId: 'workspace-custom', title: '定制项目', path: '/work/custom', sessionIds: [], createdAt: '', updatedAt: '' }], archivedSessionIds: [] }) },
-      sessions: {
-        create: async () => success({ sessionId: 'session-custom' }),
-        rename: async () => success({ title: 'review', seq: 1 }),
-        prompt: async (request: { payload: { content: Array<{ text: string }> } }) => { prompts.push(request.payload.content[0]!.text); return success({}) },
-        history: async () => success({
-          events: [
-            { event: { type: 'user/message', data: { content: [{ type: 'text', text: prompts[0] }] } } },
-            { event: { type: 'user/message', data: { content: [{ type: 'text', text: prompts[1] }] } } },
-            { event: { type: 'assistant/message', data: { content: [{ type: 'text', text: '已经补充。' }] } } },
-          ],
-          hasMore: false,
-        }),
+      workspaceRegistry: { list: () => [{ id: 'workspace-custom', title: '定制项目', path: '/work/custom' }] },
+      sessionController: {
+        create: async () => ({ sessionId: 'session-custom' }),
+        rename: async () => ({ title: 'review', seq: 1 }),
+        prompt: async (request: { content: Array<{ text: string }> }) => { prompts.push(request.content[0]!.text); return { accepted: true } },
+        inspect: async (sessionId: string, signal: AbortSignal) => {
+          expect(sessionId).toBe('session-custom')
+          expect(signal.aborted).toBe(false)
+          return {
+            events: [
+              { type: 'user/message', data: { content: [{ type: 'text', text: prompts[0] }] } },
+              { type: 'user/message', data: { message: { content: [{ type: 'text', text: prompts[1] }] } } },
+              { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '已经补充。' }] } } },
+            ],
+          }
+        },
       },
-    } as unknown as ApiProxy
+    } as unknown as DshReviewHost
     const coordinator = new DshReviewCoordinator(api, new ReviewContextCatalog(), {
       workspaceContext: '先读取 {{WORKSPACE_TITLE}}（{{WORKSPACE_PATH}}）\n{{WORKSPACE_SNAPSHOT}}\n{{RESOURCE_INSTRUCTIONS}}',
       resourceInstructions: '团队资源：{{SKILLS}} / {{MCP_SERVERS}} / {{DOCUMENT_PATHS}}',

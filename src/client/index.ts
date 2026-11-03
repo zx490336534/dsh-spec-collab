@@ -1,10 +1,8 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
 import { SpecApi } from './api.ts'
 import { mountSidebarEntry, mountWorkbench } from './mount.tsx'
 
-export const inject = ['sessions']
-
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
   const api = new SpecApi()
   const disposers: Array<() => void> = []
   try {
