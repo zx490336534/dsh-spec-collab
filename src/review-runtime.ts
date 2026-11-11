@@ -7,8 +7,18 @@ import { DEFAULT_REVIEW_PROMPTS, extractPromptValue, renderPrompt, resolveReview
 import { ReviewContextCatalog, reviewContextPrompt } from './review-context.ts'
 import { readWorkspaceSnapshot } from './workspace-context.ts'
 
+interface ReviewHistoryEvent { type: string; data: unknown }
+interface ReviewHistoryPage {
+  cursor: number
+  records: readonly { type: 'event'; event: ReviewHistoryEvent & { seq: number } }[]
+  hasMore: boolean
+}
+interface ReviewHistoryReader {
+  events?(request: { address: { kind: 'session'; sessionId: SessionPromptRequest['sessionId'] }; maxMessages: number; throughSeq?: number; beforeSeq?: number }, signal: AbortSignal): Promise<ReviewHistoryPage>
+  inspect?(sessionId: SessionPromptRequest['sessionId'], signal: AbortSignal): Promise<{ events: readonly ReviewHistoryEvent[] }>
+}
 export interface DshReviewHost {
-  sessionController: Pick<SessionController, 'create' | 'rename' | 'prompt' | 'inspect'>
+  sessionController: Pick<SessionController, 'create' | 'rename' | 'prompt'> & ReviewHistoryReader
   workspaceRegistry: Pick<WorkspaceRegistry, 'list'>
   agentPresets: Pick<AgentPresetRegistry, 'list'>
 }
@@ -45,10 +55,10 @@ export class DshReviewCoordinator implements AiCoordinator {
     })
   }
   async conversation(sessionId: string): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
-    const history = await this.host.sessionController.inspect(sessionId as SessionPromptRequest['sessionId'], this.lifetime.signal)
+    const events = await this.conversationEvents(sessionId as SessionPromptRequest['sessionId'])
     const rows: Array<{ role: 'user' | 'assistant'; text: string }> = []
     let skippedOrchestrationPrompt = false
-    for (const entry of history.events) {
+    for (const entry of events) {
       if (entry.type !== 'user/message' && entry.type !== 'assistant/message') continue
       if (entry.type === 'user/message' && !skippedOrchestrationPrompt) { skippedOrchestrationPrompt = true; continue }
       const value = entry.data as unknown
@@ -65,6 +75,30 @@ export class DshReviewCoordinator implements AiCoordinator {
       if (messageText !== '') rows.push({ role: entry.type === 'user/message' ? 'user' : 'assistant', text: messageText })
     }
     return rows
+  }
+  private async conversationEvents(sessionId: SessionPromptRequest['sessionId']): Promise<readonly ReviewHistoryEvent[]> {
+    const controller = this.host.sessionController
+    if (controller.events !== undefined) {
+      const pages: ReviewHistoryEvent[][] = []
+      let throughSeq: number | undefined
+      let beforeSeq: number | undefined
+      for (;;) {
+        this.lifetime.signal.throwIfAborted()
+        const page = await controller.events({
+          address: { kind: 'session', sessionId }, maxMessages: 100,
+          ...(throughSeq === undefined ? {} : { throughSeq }),
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        }, this.lifetime.signal)
+        throughSeq ??= page.cursor
+        pages.push(page.records.map(record => record.event))
+        if (!page.hasMore) return pages.reverse().flat()
+        const firstSeq = page.records[0]?.event.seq
+        if (firstSeq === undefined || !Number.isSafeInteger(firstSeq) || firstSeq < 0 || (beforeSeq !== undefined && firstSeq >= beforeSeq)) throw new Error('history pagination did not advance')
+        beforeSeq = firstSeq
+      }
+    }
+    if (controller.inspect !== undefined) return (await controller.inspect(sessionId, this.lifetime.signal)).events
+    throw new Error('DSH Session history API is unavailable')
   }
   async followUp(sessionId: string, text: string): Promise<void> {
     const content = text.trim()

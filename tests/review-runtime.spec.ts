@@ -93,6 +93,61 @@ describe('DshReviewCoordinator context mounting', () => {
     await expect(coordinator.followUp('session-failed', '继续审核')).rejects.toMatchObject({ name: 'AbortError' })
   })
 
+  it('reads all pages from the new history API at a fixed cursor in chronological order', async () => {
+    const requests: unknown[] = []
+    const event = (seq: number, type: string, text: string) => ({ type: 'event', event: { seq, type, data: { message: { content: [{ type: 'text', text }] } } } })
+    const api = {
+      sessionController: {
+        events: async (request: Record<string, unknown>, signal: AbortSignal) => {
+          requests.push(request)
+          expect(signal.aborted).toBe(false)
+          return requests.length === 1
+            ? { cursor: 9, records: [event(8, 'user/message', '追问 请补充边界。'), event(9, 'assistant/message', '边界已补充。')], hasMore: true }
+            : { cursor: 9, records: [event(1, 'user/message', '初次审核编排提示'), event(2, 'assistant/message', '初次审核完成。')], hasMore: false }
+        },
+      },
+    } as unknown as DshReviewHost
+    const coordinator = new DshReviewCoordinator(api, new ReviewContextCatalog(), { followUp: '追问 {{CONTENT}}' })
+    expect(await coordinator.conversation('session-paged')).toEqual([
+      { role: 'assistant', text: '初次审核完成。' },
+      { role: 'user', text: '请补充边界。' },
+      { role: 'assistant', text: '边界已补充。' },
+    ])
+    expect(requests).toEqual([
+      { address: { kind: 'session', sessionId: 'session-paged' }, maxMessages: 100 },
+      { address: { kind: 'session', sessionId: 'session-paged' }, maxMessages: 100, throughSeq: 9, beforeSeq: 8 },
+    ])
+  })
+
+  it('reads a large tool-heavy history page without overflowing function arguments', async () => {
+    const records = Array.from({ length: 160_000 }, (_, index) => ({ type: 'event', event: { seq: index + 2, type: 'tool/call', data: {} } }))
+    records.push({ type: 'event', event: { seq: 160_002, type: 'assistant/message', data: { content: [{ type: 'text', text: '工具调用完成。' }] } } })
+    let calls = 0
+    const api = {
+      sessionController: {
+        events: async () => {
+          calls += 1
+          return calls === 1
+            ? { cursor: 160_002, records, hasMore: true }
+            : { cursor: 160_002, records: [{ type: 'event', event: { seq: 0, type: 'user/message', data: {} } }], hasMore: false }
+        },
+      },
+    } as unknown as DshReviewHost
+    expect(await new DshReviewCoordinator(api).conversation('session-tool-heavy')).toEqual([{ role: 'assistant', text: '工具调用完成。' }])
+    expect(calls).toBe(2)
+  })
+
+  it('rejects a non-advancing history page rather than looping indefinitely', async () => {
+    let calls = 0
+    const api = {
+      sessionController: {
+        events: async () => { calls += 1; return { cursor: 5, records: [{ type: 'event', event: { seq: 4, type: 'assistant/message', data: { content: [] } } }], hasMore: true } },
+      },
+    } as unknown as DshReviewHost
+    await expect(new DshReviewCoordinator(api).conversation('session-stuck')).rejects.toThrow('history pagination did not advance')
+    expect(calls).toBe(2)
+  })
+
   it('uses configured prompt overrides while preserving defaults for omitted prompts', async () => {
     const prompts: string[] = []
     const api = {

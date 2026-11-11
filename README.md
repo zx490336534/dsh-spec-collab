@@ -7,23 +7,25 @@ DeepSeek Harness 的需求“编辑校样台”，用于把原始需求澄清为
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
-当前版本为 `v0.4.0`，兼容 DeepSeek Harness `v0.2.1-rc.5`。DSH `v0.1.1-rc.1` 请继续使用插件 `v0.3.1`；两个版本使用不同的宿主接口。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；新版 DSH 从“插件”入口旁挂载“需求讨论”，旧版侧栏仍支持“技能中心 / 设置”入口。
+当前版本为 `v0.4.1`，支持 DeepSeek Harness `0.2.1`（从 `rc.5` 起）与 `0.2.2`（从 `rc.1` 起），包含对应的稳定版本。插件使用有上界的 `engines.dsh` 和 SDK peer 范围；`0.2.3` 及后续系列需要验证后再扩展支持。DSH `v0.1.1-rc.1` 请继续使用插件 `v0.3.1`。
+
+插件在 DSH `0.2.2` 上通过分页事件接口读取完整 AI 历史，并保留 `0.2.1` 的历史读取方式。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；侧栏从“插件”入口旁挂载“需求讨论”，同时保留“技能中心 / 设置”定位。
 
 ## 安装
 
-可在 DSH 插件管理中选择“安装第三方插件”，输入 `dsh-spec-collab@0.4.0`。命令行安装可使用与宿主同版本的 CLI：
+可在 DSH 插件管理中选择“安装第三方插件”，输入 `dsh-spec-collab@0.4.1`。命令行安装可使用与宿主同版本的 CLI：
 
 ```sh
-npx -y @deepseek-ai/dsh@0.2.1-rc.5 plugin --profile desktop add dsh-spec-collab@0.4.0
+npx -y @deepseek-ai/dsh@0.2.2-rc.1 plugin --profile desktop add dsh-spec-collab@0.4.1
 ```
 
 如果 `dsh` 已在 `PATH` 中，也可以使用简写：
 
 ```sh
-dsh plugin --profile desktop add dsh-spec-collab@0.4.0
+dsh plugin --profile desktop add dsh-spec-collab@0.4.1
 ```
 
-安装到当前正在使用的 profile 后，在插件管理中确认插件已启用；如界面提示需要重启，重启现有桌面应用或 `dsh web` 进程。后续更新仍通过同一 profile 安装明确兼容的版本。
+安装到当前正在使用的 profile 后，在插件管理中确认插件已启用；如界面提示需要重启，重启现有桌面应用或 `dsh web` 进程。已安装 `0.4.0` 时，在同一 profile 中卸载旧版后安装 `0.4.1`，再启用插件。
 
 插件已经内置非安全 HTTP 环境所需的 UUID fallback，不需要通过代理向 HTML 注入 `crypto` polyfill。团队部署仍建议使用 HTTPS，并在 DSH 前配置认证。
 
@@ -94,7 +96,7 @@ dsh plugin --profile desktop add dsh-spec-collab@0.4.0
 
 </details>
 
-## 当前能力（v0.4.0）
+## 当前能力（v0.4.1）
 
 ### 需求正文与版本
 

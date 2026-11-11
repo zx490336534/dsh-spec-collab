@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 2026-11-11
+
+- Support DSH 0.2.2-rc.1 while retaining 0.2.1-rc.5 compatibility. Declare bounded runtime and SDK peer windows for both release lines, including npm's default prerelease matching, and reject unverified 0.2.3 and later releases.
+- Replace the removed Session Controller inspection call with paginated event history on DSH 0.2.2. Keep one history cursor while reading earlier pages, preserve chronological replies, reject non-advancing cursors, and fall back to inspection on DSH 0.2.1.
+- Build and type-check against the 0.2.2-rc.1 SDK and support both Cordis 4.0/4.1 and native schema versions. Cover the original exact-peer rejection, supported and unsupported runtimes, legacy history, and the current history protocol.
+
 ## 0.4.0 — 2026-11-03
 
 - Support DeepSeek Harness 0.2.1-rc.5 and declare its Host services as exact SDK peers. Older DSH 0.1.1-rc.1 installations must continue using plugin 0.3.1.
