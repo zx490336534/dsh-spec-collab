@@ -5,8 +5,12 @@ export function hasCompletedCurrentReview(record: Pick<RequirementRecord, 'aiRun
   return record.aiRuns.some(run => run.commit === record.currentCommit && run.kind === kind && run.status === 'completed')
 }
 
+export function currentVersionConfirmations(record: Pick<RequirementRecord, 'confirmations' | 'currentCommit'>, role: ParticipantRole) {
+  return record.confirmations.filter(item => item.commit === record.currentCommit && item.role === role && item.scope === 'version' && item.status === 'active' && item.participant.kind === 'human' && item.participant.role === role)
+}
+
 export function hasVersionConfirmation(record: Pick<RequirementRecord, 'confirmations' | 'currentCommit'>, role: ParticipantRole): boolean {
-  return record.confirmations.some(item => item.commit === record.currentCommit && item.role === role && item.scope === 'version' && item.status === 'active')
+  return currentVersionConfirmations(record, role).length > 0
 }
 
 /** Shared by workflow guidance and the authoritative Ready write. Checks must come from the current Git body. */

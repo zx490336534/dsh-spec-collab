@@ -7,27 +7,23 @@ DeepSeek Harness 的需求“编辑校样台”，用于把原始需求澄清为
 
 产品边界严格止于 Ready Spec，不包含代码实现、测试用例生成、worktree、MR、部署、发布或交付状态管理。
 
-当前版本为 `v0.4.1`，支持 DeepSeek Harness `0.2.1`（从 `rc.5` 起）与 `0.2.2`（从 `rc.1` 起），包含对应的稳定版本。插件使用有上界的 `engines.dsh` 和 SDK peer 范围；`0.2.3` 及后续系列需要验证后再扩展支持。DSH `v0.1.1-rc.1` 请继续使用插件 `v0.3.1`。
+当前版本为 `v0.5.0`，已在 npm `latest` 对应的 DeepSeek Harness `0.2.2-rc.5` 上验证安装、工作台和 Ready 流程。版本范围覆盖 DSH `0.2.1`（从 `rc.5` 起）与 `0.2.2`（从 `rc.1` 起），包括对应的稳定版本。`0.2.3-alpha.2` 属于 `alpha` 渠道，超出兼容范围。DSH `0.1.1-rc.1` 请使用插件 `0.3.1`。
 
-插件在 DSH `0.2.2` 上通过分页事件接口读取完整 AI 历史，并保留 `0.2.1` 的历史读取方式。插件可在局域网 HTTP 地址下运行，不依赖浏览器提供 `crypto.randomUUID`；侧栏从“插件”入口旁挂载“需求讨论”，同时保留“技能中心 / 设置”定位。
+插件在 DSH `0.2.2` 上通过分页事件接口读取 AI 会话历史，并保留 `0.2.1` 的历史读取方式。在 `0.2.2-rc.5` 中，从侧栏「插件」旁的「需求讨论」进入工作台。
 
 ## 安装
 
-可在 DSH 插件管理中选择“安装第三方插件”，输入 `dsh-spec-collab@0.4.1`。命令行安装可使用与宿主同版本的 CLI：
+桌面版可在 DSH 的「插件」中添加 `dsh-spec-collab@0.5.0`。如果界面提示需要重启，退出并重新打开桌面应用，再确认插件已启用。
+
+使用独立 Web 的用户可通过与宿主同版本的 CLI 安装或升级：
 
 ```sh
-npx -y @deepseek-ai/dsh@0.2.2-rc.1 plugin --profile desktop add dsh-spec-collab@0.4.1
+npx -y @deepseek-ai/dsh@0.2.2-rc.5 plugin --profile web add dsh-spec-collab@0.5.0
 ```
 
-如果 `dsh` 已在 `PATH` 中，也可以使用简写：
+如果当前 `dsh` 已在 `PATH` 中，可以运行 `dsh plugin --profile web add dsh-spec-collab@0.5.0`。使用自定义 profile 时，将 `web` 替换为实际名称。重启使用该 profile 的 Web 进程后，刷新浏览器。
 
-```sh
-dsh plugin --profile desktop add dsh-spec-collab@0.4.1
-```
-
-安装到当前正在使用的 profile 后，在插件管理中确认插件已启用；如界面提示需要重启，重启现有桌面应用或 `dsh web` 进程。已安装 `0.4.0` 时，在同一 profile 中卸载旧版后安装 `0.4.1`，再启用插件。
-
-插件已经内置非安全 HTTP 环境所需的 UUID fallback，不需要通过代理向 HTML 注入 `crypto` polyfill。团队部署仍建议使用 HTTPS，并在 DSH 前配置认证。
+DSH 宿主需要安装 Git。插件可在本机 HTTP 环境生成 UUID。通过团队反向代理使用时，插件请求仍需同源，且代理连接插件后端时须来自 loopback。使用 HTTPS 和真实认证，浏览器还需允许剪贴板操作。
 
 ## 核心流程
 
@@ -67,7 +63,7 @@ dsh plugin --profile desktop add dsh-spec-collab@0.4.1
 
 ## 完整演示
 
-下面的图片来自一条全新需求从创建到 Ready Spec 的真实流程，均使用 ego-browser 截取，并在截图前收起 DSH 主侧边栏。
+截图来自 DSH `0.2.2-rc.5` 上从新建到 Ready Spec 的隔离验收。使用可控模型端点返回演示结果，由 DSH 执行会话和工具调用，再通过工作台完成回答、Patch 审核和交付。
 
 **[阅读完整图文教程](docs/usage-walkthrough.md)**
 
@@ -92,11 +88,11 @@ dsh plugin --profile desktop add dsh-spec-collab@0.4.1
 
 ### 5. 查看并导出 Ready Spec
 
-![Ready 质量门与最终 Ready Spec](docs/assets/demo-05-ready.png)
+![已就绪状态和 Ready Markdown 导出](docs/assets/demo-05-ready.png)
 
 </details>
 
-## 当前能力（v0.4.1）
+## 当前能力（v0.5.0）
 
 ### 需求正文与版本
 
@@ -110,7 +106,7 @@ dsh plugin --profile desktop add dsh-spec-collab@0.4.1
 
 ### AI 审核与候选修改
 
-- `FACT / INFERENCE / ASSUMPTION / TO_VERIFY` 结构化 Review Item；`FACT` 强制可访问且带版本的证据。
+- 结构化 Review Item 区分 `FACT / INFERENCE / ASSUMPTION / TO_VERIFY`。提交 `FACT` 时必须提供声明可访问且填写版本的证据。
 - 同一需求在同一流程阶段复用一个 DSH AI session；审核、评论分析和追问只追加增量提示，进入下一阶段后再创建新会话。
 - 每条实质评论提交后自动进入当前阶段 AI 会话，回复必须包含理解、证据或 `TO_VERIFY`、影响章节/AC 和建议处置。
 - AI 只能提交 Review Item、评论分析和候选 patch；不能写 Git、代替人确认或标记 Ready。
@@ -221,7 +217,7 @@ pnpm run build
 dsh plugin --profile desktop add "link:$(pwd)"
 ```
 
-首次安装或 Host 代码变更后重启现有 `dsh web`。Client 开发时需在 DeepSeek Harness checkout 运行 `pnpm run dev:web`，插件侧运行 `pnpm run bundle --watch`，现有 GUI 的 client-plugin HMR 才会接收 bundle 更新。
+首次安装或 Host 代码变更后，重启承载插件的桌面应用或 `dsh web` 进程。使用 DSH 源码开发 Client 时，可在同一个 DSH checkout 运行 `pnpm run dev:web`，并在插件仓库运行 `pnpm run bundle --watch`，让已连接的 Client 接收更新。
 
 ## 键盘与响应式工作台
 
@@ -250,7 +246,9 @@ CSV 必填 `body`，可选 `title`、`customer`、`company`、`external_ref`、`
 
 Git 是正式 Spec 版本的唯一事实源；协作账本不保存第二套 Markdown 历史。未正式保存的草稿只保存在当前浏览器 IndexedDB。
 
-[阅读 v3 迁移、回滚与隐私说明](docs/migration-v3.md)
+单个插件宿主管理一套 Git 仓库和协作账本。正文变更先记录待完成的事务，再更新 Git 和账本。宿主中断后会在下次启动时续写。如果恢复前有人编辑了同一个 Spec 路径，插件保留外部编辑和恢复记录，并报告冲突。
+
+[阅读 v3 迁移、回滚与隐私说明](docs/migration-v3.md) · [查看核心重构与消融结果](docs/core-refactor-ablation.md)
 
 ## 安全与限制
 

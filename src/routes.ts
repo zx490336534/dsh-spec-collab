@@ -16,11 +16,13 @@ export function makeRoutes(engine: CollaborationEngine, coordinator: DshReviewCo
   return [
     { kind: 'exact', path: `${API_PREFIX}/state`, handler: (req, res) => {
       if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return
-      const state = engine.snapshot(); const summaries = engine.summaries(); const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`)
-      const requestedId = url.searchParams.get('requirementId'); const currentId = requestedId ?? summaries.find(item => item.archivedAt === undefined)?.id ?? summaries[0]?.id
+      const overview = engine.overview()
+      const url = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`)
+      const requestedId = url.searchParams.get('requirementId')
+      const currentId = requestedId ?? overview.requirements.find(item => item.archivedAt === undefined)?.id ?? overview.requirements[0]?.id
       let requirement
       try { requirement = currentId ? engine.view(currentId) : undefined } catch {}
-      json(res, 200, { revision: state.revision, participants: state.participants, requirements: summaries, ...(requirement ? { requirement } : {}) })
+      json(res, 200, { ...overview, ...(requirement ? { requirement } : {}) })
     } },
     { kind: 'exact', path: `${API_PREFIX}/directory`, handler: (req, res) => { if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method-not-allowed' }); if (!guard(req, res)) return; json(res, 200, { ok: true, participants: engine.directory() }) } },
     { kind: 'exact', path: `${API_PREFIX}/notifications`, handler: (req, res) => {
@@ -76,6 +78,6 @@ export function makeRoutes(engine: CollaborationEngine, coordinator: DshReviewCo
         return json(res, 405, { ok: false, error: 'method-not-allowed' })
       } catch (error) { return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) }) }
     } },
-    { kind: 'exact', path: `${API_PREFIX}/events`, handler: (req, res) => { if (req.method !== 'GET') { res.writeHead(405); res.end(); return } if (!guard(req, res)) return; res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' }); const push = (event: CollaborationEvent): void => { res.write(`data: ${JSON.stringify(event)}\n\n`) }; const unsubscribe = engine.subscribe(push); const heartbeat = setInterval(() => { res.write(': ping\n\n') }, HEARTBEAT_MS); const close = (): void => { clearInterval(heartbeat); unsubscribe() }; req.once('close', close); res.once('close', close); push({ types: ['state.synced'], revision: engine.snapshot().revision }) } },
+    { kind: 'exact', path: `${API_PREFIX}/events`, handler: (req, res) => { if (req.method !== 'GET') { res.writeHead(405); res.end(); return } if (!guard(req, res)) return; res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' }); const push = (event: CollaborationEvent): void => { res.write(`data: ${JSON.stringify(event)}\n\n`) }; const unsubscribe = engine.subscribe(push); const heartbeat = setInterval(() => { res.write(': ping\n\n') }, HEARTBEAT_MS); const close = (): void => { clearInterval(heartbeat); unsubscribe() }; req.once('close', close); res.once('close', close); push({ types: ['state.synced'], revision: engine.revision }) } },
   ]
 }

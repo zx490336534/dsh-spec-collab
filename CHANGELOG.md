@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — 2026-11-25
+
+- Share one commit transition across saves, renames, restores, and accepted patches. Invalidate the previous Ready package, whole-version confirmations, and pending patches when the Spec advances.
+- Record the next collaboration ledger before moving the Git ref. Recover interrupted writes on startup and isolate Spec commits from unrelated staged files.
+- Commit human actions and AI submissions atomically. Keep terminal AI results when dispatch acknowledgements arrive late.
+- Use the same current-version human signers for Ready admission and export. Keep the existing compatibility range and verify the packaged plugin on DSH 0.2.2-rc.5.
+- Refresh the walkthrough and validate the core mechanisms with reproducible ablation tests.
+
 ## 0.4.1 — 2026-11-11
 
 - Support DSH 0.2.2-rc.1 while retaining 0.2.1-rc.5 compatibility. Declare bounded runtime and SDK peer windows for both release lines, including npm's default prerelease matching, and reject unverified 0.2.3 and later releases.
