@@ -16,7 +16,7 @@ declare module '@toast-ui/editor' {
     constructor(options: EditorOptions)
     on(type: string, handler: () => void): void
     getMarkdown(): string
-    setMarkdown(markdown: string): void
+    setMarkdown(markdown: string, cursorToEnd?: boolean): void
     getSelectedText(): string
     destroy(): void
   }

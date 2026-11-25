@@ -3,12 +3,13 @@ import MarkdownIt from 'markdown-it'
 import ToastEditor from '@toast-ui/editor'
 import '@toast-ui/editor/dist/i18n/zh-cn'
 import { InputRule, inputRules } from 'prosemirror-inputrules'
-import type { CollaborationAction, CommentResolution, CommentThread, MyActionItem, Notification, ParticipantRole, ParticipantSnapshot, RequirementStage, RequirementSummary, RequirementView, ReviewItemType, ReviewKind, ReviewWorkspaceSummary, SaveConflict, StructuredDiff } from '../protocol.ts'
+import type { CollaborationAction, CommentResolution, CommentThread, DraftRecord, MyActionItem, Notification, ParticipantRole, ParticipantSnapshot, RequirementStage, RequirementSummary, RequirementView, ReviewItemType, ReviewKind, ReviewWorkspaceSummary, SaveConflict, StructuredDiff } from '../protocol.ts'
 import type { SpecApi } from './api.ts'
 import { browserUuid } from './browser-uuid.ts'
 import { commentTargetElements, reviewBlockSelector, reviewSourceSnippets, reviewTargetElements } from './review-anchors.ts'
 import { friendlyActionError, workflowState, type TaskView, type WorkflowCommand, type WorkflowState } from './workflow.ts'
 import { AccessibleDialog } from './AccessibleDialog.tsx'
+import { RequirementLibrary, StageTrack, stageLabels, stages } from './RequirementLibrary.tsx'
 import { deleteDraft, loadDraft, safeHttpUrl, saveDraft, truncateGraphemes } from './drafts.ts'
 import css from './workbench.module.css'
 
@@ -54,7 +55,7 @@ export type EditorSelection = CommentAnchor & InlinePopoverPosition
 type ReviewOpenRequest = { objectId: string; requestId: number }
 type InlineReviewTarget = { itemId: string; sourceKey?: string } & Partial<InlinePopoverPosition>
 type DocumentAnchorFocus = { kind: 'review'; objectId: string; sourceKey?: string } | { kind: 'comment'; objectId: string }
-type PendingNavigation = { kind: 'select'; requirementId: string } | { kind: 'close' } | { kind: 'toggle-archive' } | { kind: 'deep-link'; hash: string } | { kind: 'archive'; requirementId: string; archived: boolean }
+type PendingNavigation = { kind: 'select'; requirementId: string } | { kind: 'close' } | { kind: 'create' } | { kind: 'deep-link'; hash: string } | { kind: 'archive'; requirementId: string; archived: boolean }
 const inlineReviewPopoverSize = { width: 720, height: 760 } as const
 function inlinePopoverPositionFromRect(rect: Pick<DOMRect, 'top' | 'bottom' | 'left'>, size: { width: number; height: number }): InlinePopoverPosition {
   const padding = 12
@@ -98,7 +99,7 @@ export function annotationScrollTargets(root: HTMLElement | null | undefined): H
 }
 function newParticipant(): ParticipantSnapshot { return { participantId: browserUuid(), nickname: '', role: 'product', kind: 'human' } }
 function loadParticipant(): ParticipantSnapshot { try { const value = JSON.parse(localStorage.getItem('dsh-spec-collab.participant') ?? '') as ParticipantSnapshot; if (value.participantId) return { ...value, kind: 'human' } } catch {} return newParticipant() }
-function stageLabel(stage: RequirementStage): string { return ({ 'product-review': '澄清', 'product-confirmation': '产品确认', 'joint-review': '产研确认', ready: '已就绪' })[stage] }
+function stageLabel(stage: RequirementStage): string { return stageLabels[stage] }
 function relativeTime(timestamp: number): string { const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000)); if (seconds < 60) return '刚刚'; const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes} 分钟前`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours} 小时前`; return `${Math.floor(hours / 24)} 天前` }
 function durationText(milliseconds: number): string { const seconds = Math.max(0, Math.round(milliseconds / 1000)); return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` }
 function cleanDisplayText(value: string, max = 84): string { return truncateGraphemes(value.replace(/\uFFFD+/g, ''), max) }
@@ -106,9 +107,10 @@ function downloadText(name: string, text: string): void { const url = URL.create
 function handleTabs<T extends string>(event: ReactKeyboardEvent<HTMLElement>, values: readonly T[], current: T, setCurrent: (value: T) => void): void {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault(); const index = Math.max(0, values.indexOf(current)); const next = event.key === 'Home' ? 0 : event.key === 'End' ? values.length - 1 : event.key === 'ArrowRight' ? (index + 1) % values.length : (index - 1 + values.length) % values.length
-  setCurrent(values[next]!); window.setTimeout(() => (event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next])?.focus(), 0)
+  const tab = event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]
+  setCurrent(values[next]!)
+  tab?.focus()
 }
-function requirementParticipantIds(requirement: RequirementSummary): Set<string> { return new Set(requirement.participantIds) }
 export function mentionedParticipantIds(body: string, participants: ParticipantSnapshot[]): string[] {
   return participants.filter(participant => {
     const token = `@${participant.nickname}`; let index = body.indexOf(token)
@@ -118,28 +120,27 @@ export function mentionedParticipantIds(body: string, participants: ParticipantS
 }
 export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => void }) {
   const workbenchRef = useRef<HTMLDivElement>(null)
+  const workspaceHeading = useRef<HTMLHeadingElement>(null)
   const [requirements, setRequirements] = useState<RequirementSummary[]>([])
   const [selectedRequirement, setSelectedRequirement] = useState<RequirementView>()
   const [reviewWorkspaces, setReviewWorkspaces] = useState<ReviewWorkspaceSummary[]>([])
   const [participantBindings, setParticipantBindings] = useState<ParticipantSnapshot[]>([])
   const [selectedId, setSelectedId] = useState<string>()
   const [participant, setParticipant] = useState(loadParticipant)
-  const [identityOpen, setIdentityOpen] = useState(false)
+  const [identityDraft, setIdentityDraft] = useState<ParticipantSnapshot>()
+  const continueAfterIdentity = useRef<'create'>()
   const [createOpen, setCreateOpen] = useState(false)
   const [bindWorkspaceOpen, setBindWorkspaceOpen] = useState(false)
   const [bindWorkspaceId, setBindWorkspaceId] = useState('')
-  const [showArchived, setShowArchived] = useState(false)
-  const [manageMenuId, setManageMenuId] = useState<string>()
+  const [screen, setScreen] = useState<'library' | 'workspace'>(() => location.hash.startsWith('#spec-collab/') ? 'workspace' : 'library')
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string>()
   const [manageTargetId, setManageTargetId] = useState<string>()
   const [renameOpen, setRenameOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [renameTitle, setRenameTitle] = useState('')
-  const [documentsOpen, setDocumentsOpen] = useState(true)
   const [reviewOpen, setReviewOpen] = useState(true)
   const [focusMode, setFocusMode] = useState(false)
-  const previousPaneState = useRef({ documents: true, review: true })
-  const [documentDrawerOpen, setDocumentDrawerOpen] = useState(false)
-  const [documentsWidth, setDocumentsWidth] = useState(() => Number(localStorage.getItem('dsh-spec-collab.documents-width')) || 220)
   const [reviewWidth, setReviewWidth] = useState(() => Number(localStorage.getItem('dsh-spec-collab.review-width')) || 430)
   const [createForm, setCreateForm] = useState({ title: '', rawRequirement: '', sources: '', workspaceId: '' })
   const [primaryMode, setPrimaryMode] = useState<PrimaryMode>('tasks')
@@ -165,8 +166,6 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const [commentText, setCommentText] = useState('')
   const [draftSelection, setDraftSelection] = useState<EditorSelection>()
   const [inlineReview, setInlineReview] = useState<InlineReviewTarget>()
-  const [requirementQuery, setRequirementQuery] = useState('')
-  const [requirementFilters, setRequirementFilters] = useState<{ stage: 'all' | RequirementStage; participantId: string; risk: boolean; unread: boolean; insights: boolean }>({ stage: 'all', participantId: '', risk: false, unread: false, insights: false })
   const [pageCommentOpen, setPageCommentOpen] = useState(false)
   const [pageCommentText, setPageCommentText] = useState('')
   const [notifications, setNotifications] = useState<Notification[]>([])
@@ -174,20 +173,12 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const [myWorkOpen, setMyWorkOpen] = useState(false)
   const [draftSavedAt, setDraftSavedAt] = useState<number>()
   const [draftContextKey, setDraftContextKey] = useState<string>()
+  const [draftBaseCommit, setDraftBaseCommit] = useState<string>()
+  const draftOnExit = useRef<DraftRecord>()
   const [undoArchiveId, setUndoArchiveId] = useState<string>()
   const scrollPositions = useRef(new Map<string, number>())
-  const normalizedQuery = requirementQuery.trim().toLocaleLowerCase()
-  const unreadRequirementIds = new Set(notifications.filter(item => item.readAt === undefined).map(item => item.requirementId))
-  const visibleRequirements = requirements.filter(item => Boolean(item.archivedAt) === showArchived
-    && (!normalizedQuery || `${item.id}\n${item.title}`.toLocaleLowerCase().includes(normalizedQuery))
-    && (requirementFilters.stage === 'all' || item.stage === requirementFilters.stage)
-    && (!requirementFilters.participantId || requirementParticipantIds(item).has(requirementFilters.participantId))
-    && (!requirementFilters.risk || item.metrics.riskCount > 0)
-    && (!requirementFilters.unread || unreadRequirementIds.has(item.id))
-    && (!requirementFilters.insights || item.metrics.insightCount > 0))
-    .sort((left, right) => right.updatedAt - left.updatedAt)
-  const activeRequirementFilterCount = Number(requirementFilters.stage !== 'all') + Number(Boolean(requirementFilters.participantId)) + Number(requirementFilters.risk) + Number(requirementFilters.unread) + Number(requirementFilters.insights)
   const selected = selectedRequirement?.id === selectedId ? selectedRequirement : undefined
+  useEffect(() => { if (screen === 'workspace') workspaceHeading.current?.focus({ preventScroll: true }) }, [screen, selected?.id])
   const manageTarget = requirements.find(item => item.id === manageTargetId)
   const boundRole = participantBindings.find(item => item.participantId === participant.participantId)?.role
   const currentMyItems = selected ? myItems.filter(item => item.requirementId === selected.id) : []
@@ -201,43 +192,97 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const pendingPatches = selected?.patches.filter(item => item.baseCommit === selected.currentCommit && item.status === 'pending') ?? []
   const openDiscussions = selected?.metrics.openCommentCount ?? 0
   const failedChecks = selected?.readiness.filter(item => !item.passed).length ?? 0
-  const openReviewCount = selected?.metrics.openReviewCount ?? 0
-  const blockingReviewCount = selected?.metrics.riskCount ?? 0
-  const activeDecisionCount = selected?.metrics.activeDecisionCount ?? 0
-  const invalidatedDecisionCount = selected?.decisions.filter(item => item.status === 'invalidated').length ?? 0
-  const runningAiCount = selected?.aiRuns.filter(item => item.commit === selected.currentCommit && ['queued', 'running'].includes(item.status)).length ?? 0
   const workflow = selected ? workflowState(selected, participant.role) : undefined
   const assertiveNotice = /失败|错误|不存在|冲突|损坏|无法|禁止|失效|未登记|阻止/.test(notice)
 
   const registered = participant.nickname.trim().length >= 2
   const participantRef = useRef(participant); participantRef.current = participant
-  const selectedIdRef = useRef(selectedId); selectedIdRef.current = selectedId
-  const refresh = async (requestedId: string | undefined = selectedIdRef.current): Promise<void> => { try { const state = await api.state(requestedId); const currentParticipant = participantRef.current; const fallbackId = state.requirement?.id ?? state.requirements.find(item => item.archivedAt === undefined)?.id ?? state.requirements[0]?.id; const nextId = requestedId && state.requirements.some(item => item.id === requestedId) ? requestedId : fallbackId; setRequirements(state.requirements); setParticipantBindings(state.participants); setSelectedId(nextId); if (state.requirement?.id === nextId) setSelectedRequirement(state.requirement); else if (!nextId) setSelectedRequirement(undefined); const binding = state.participants.find(item => item.participantId === currentParticipant.participantId); if (binding && binding.role !== currentParticipant.role) setParticipant(current => ({ ...current, role: binding.role })); if (currentParticipant.nickname.trim().length >= 2) void api.notifications(currentParticipant.participantId).then(result => setNotifications(result.items), error => setNotice(error instanceof Error ? error.message : String(error))) } catch (error) { setNotice(error instanceof Error ? error.message : String(error)) } }
-  useEffect(() => { void refresh(); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))); return api.events(() => { void refresh() }) }, [])
-  useEffect(() => { if (!selectedId || selectedRequirement?.id === selectedId) return; void refresh(selectedId) }, [selectedId, selectedRequirement?.id])
+  const selectedIdRef = useRef<string>()
+  const selectId = (id: string | undefined): void => {
+    selectedIdRef.current = id
+    setSelectedId(id)
+  }
+  const lastRevision = useRef(-1)
+  const requestOrder = useRef(0)
+  const lastAppliedRequest = useRef(0)
+  const refresh = async (): Promise<void> => {
+    const requestedId = selectedIdRef.current
+    const order = ++requestOrder.current
+    try {
+      const state = await api.state(requestedId)
+      if (requestedId !== selectedIdRef.current || state.revision < lastRevision.current || order < lastAppliedRequest.current) return
+      lastAppliedRequest.current = order
+      lastRevision.current = state.revision
+      const currentParticipant = participantRef.current
+      setRequirements(state.requirements)
+      setParticipantBindings(state.participants)
+      setSelectedRequirement(state.requirement)
+      if (requestedId !== state.requirement?.id) selectId(state.requirement?.id)
+      const binding = state.participants.find(item => item.participantId === currentParticipant.participantId)
+      if (binding && binding.role !== currentParticipant.role) setParticipant(current => ({ ...current, role: binding.role }))
+      setLoadError(undefined)
+      if (currentParticipant.nickname.trim().length >= 2) {
+        void api.notifications(currentParticipant.participantId).then(result => {
+          if (order === lastAppliedRequest.current && participantRef.current.participantId === currentParticipant.participantId) setNotifications(result.items)
+        }, error => setNotice(error instanceof Error ? error.message : String(error)))
+      }
+    } catch (error) {
+      if (order === requestOrder.current) setLoadError(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (order === requestOrder.current) setLoading(false)
+    }
+  }
+  const loadWorkspaces = (): void => {
+    void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error)))
+  }
+  useEffect(() => { void refresh(); loadWorkspaces(); return api.events(() => { void refresh() }) }, [api])
+  useEffect(() => { if (selectedId && selectedRequirement?.id !== selectedId) void refresh() }, [selectedId, selectedRequirement?.id])
   useEffect(() => {
     let cancelled = false
     setDraftContextKey(undefined)
     if (!selected) { setDraft(''); setSummary(''); return }
     const contextKey = `${selected.id}:${participant.participantId}:${selected.currentCommit}`
-    void loadDraft(selected.id, participant.participantId).then(saved => {
+    const previous = draftOnExit.current
+    const local = previous?.requirementId === selected.id && previous.participantId === participant.participantId
+      ? Promise.resolve(previous) : loadDraft(selected.id, participant.participantId)
+    void local.then(saved => {
       if (cancelled) return
-      if (saved && saved.markdown !== selected.version.markdown) { setDraft(saved.markdown); setSummary(saved.summary); setDraftSavedAt(saved.updatedAt); setNotice(saved.baseCommit === selected.currentCommit ? '已恢复本地草稿' : '已恢复旧基线草稿，保存时会进入冲突合并') }
-      else { setDraft(selected.version.markdown); setSummary(''); setDraftSavedAt(undefined) }
+      if (saved && saved.markdown !== selected.version.markdown) {
+        setDraft(saved.markdown)
+        setSummary(saved.summary)
+        setDraftBaseCommit(saved.baseCommit)
+        setDraftSavedAt(saved.updatedAt)
+        setNotice(saved.baseCommit === selected.currentCommit ? '已恢复本地草稿' : '正文已更新，保存草稿时会提示合并')
+      } else {
+        setDraft(selected.version.markdown)
+        setSummary('')
+        setDraftBaseCommit(selected.currentCommit)
+        setDraftSavedAt(undefined)
+      }
       setDraftContextKey(contextKey)
     })
     return () => { cancelled = true }
   }, [selected?.id, selected?.currentCommit, participant.participantId])
   useEffect(() => { setDocumentFocus(undefined); setDraftSelection(undefined); setCommentText(''); setInlineReview(undefined) }, [selected?.id, selected?.currentCommit])
   useEffect(() => { localStorage.setItem('dsh-spec-collab.participant', JSON.stringify(participant)) }, [participant])
-  useEffect(() => { localStorage.setItem('dsh-spec-collab.documents-width', String(documentsWidth)) }, [documentsWidth])
   useEffect(() => { localStorage.setItem('dsh-spec-collab.review-width', String(reviewWidth)) }, [reviewWidth])
-  useEffect(() => { if (!registered) { setMyItems([]); return }; void api.myItems(participant).then(setMyItems, error => setNotice(error instanceof Error ? error.message : String(error))) }, [participant.participantId, participant.role, requirements])
   useEffect(() => {
-    if (!selected || draftContextKey !== `${selected.id}:${participant.participantId}:${selected.currentCommit}` || draft === selected.version.markdown) return
-    const timer = window.setTimeout(() => { const updatedAt = Date.now(); void saveDraft({ requirementId: selected.id, participantId: participant.participantId, baseCommit: selected.currentCommit, markdown: draft, summary, updatedAt }).then(() => setDraftSavedAt(updatedAt)) }, 500)
+    if (!registered) { setMyItems([]); return }
+    let current = true
+    void api.myItems(participant).then(items => { if (current) setMyItems(items) }, error => { if (current) setNotice(error instanceof Error ? error.message : String(error)) })
+    return () => { current = false }
+  }, [registered, participant.participantId, participant.role, requirements])
+  useEffect(() => {
+    if (!selected || !draftBaseCommit || draftContextKey !== `${selected.id}:${participant.participantId}:${selected.currentCommit}`) return
+    if (draft === selected.version.markdown) { draftOnExit.current = undefined; return }
+    const record: DraftRecord = { requirementId: selected.id, participantId: participant.participantId, baseCommit: draftBaseCommit, markdown: draft, summary, updatedAt: Date.now() }
+    draftOnExit.current = record
+    const timer = window.setTimeout(() => { void saveDraft(record).then(() => setDraftSavedAt(record.updatedAt)) }, 500)
     return () => window.clearTimeout(timer)
-  }, [selected?.id, selected?.currentCommit, selected?.version.markdown, participant.participantId, draft, summary, draftContextKey])
+  }, [selected?.id, selected?.currentCommit, selected?.version.markdown, participant.participantId, draft, summary, draftContextKey, draftBaseCommit])
+  useEffect(() => () => {
+    if (draftOnExit.current) void saveDraft(draftOnExit.current)
+  }, [])
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent): void => { if (selected && draft !== selected.version.markdown) { event.preventDefault(); event.returnValue = '' } }
     window.addEventListener('beforeunload', beforeUnload); return () => window.removeEventListener('beforeunload', beforeUnload)
@@ -246,14 +291,15 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
     if (!selected) return
     const timer = window.setTimeout(() => { const scroller = workbenchRef.current?.querySelector<HTMLElement>('.toastui-editor-ww-container'); if (scroller) scroller.scrollTop = scrollPositions.current.get(selected.id) ?? 0 }, 80)
     return () => { window.clearTimeout(timer); const scroller = workbenchRef.current?.querySelector<HTMLElement>('.toastui-editor-ww-container'); if (scroller) scrollPositions.current.set(selected.id, scroller.scrollTop) }
-  }, [selected?.id])
+  }, [selected?.id, screen])
   useEffect(() => {
     const shortcut = (event: KeyboardEvent): void => {
+      if (screen !== 'workspace') return
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLocaleLowerCase() === 'f') { event.preventDefault(); toggleFocusMode() }
       else if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 's') { event.preventDefault(); if (selected && draft !== selected.version.markdown && summary.trim()) void save() }
     }
     window.addEventListener('keydown', shortcut); return () => window.removeEventListener('keydown', shortcut)
-  }, [focusMode, documentsOpen, reviewOpen, selected?.id, selected?.version.markdown, draft, summary])
+  }, [screen, focusMode, selected?.id, selected?.version.markdown, draft, summary])
   useEffect(() => {
     const resolve = (): void => {
       if (location.hash === resolvedDeepLinkHash.current) return
@@ -261,13 +307,17 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
       if (!match) return
       const requirementId = decodeURIComponent(match[1]!); const view = match[2]!; const objectId = match[3] ? decodeURIComponent(match[3]) : undefined
       const requirement = requirements.find(item => item.id === requirementId)
-      if (!requirement) { if (requirements.length > 0) { resolvedDeepLinkHash.current = location.hash; setNotice('链接指向的需求不存在或已被删除') } return }
+      if (!requirement) {
+        if (!loading && !loadError) { resolvedDeepLinkHash.current = location.hash; setScreen('library'); setNotice('链接指向的需求不存在或已被删除') }
+        return
+      }
       if (selected && selected.id !== requirementId && draft !== selected.version.markdown && approvedDeepLinkHash.current !== location.hash) { setPendingNavigation({ kind: 'deep-link', hash: location.hash }); return }
-      if (selected?.id !== requirementId) { setSelectedId(requirementId); return }
+      setScreen('workspace')
+      if (selected?.id !== requirementId) { selectId(requirementId); return }
       const target = resolveDeepLinkTarget(selected, view, objectId)
       approvedDeepLinkHash.current = ''
       resolvedDeepLinkHash.current = location.hash
-      setDocumentDrawerOpen(false); setReviewOpen(true)
+      setFocusMode(false); setReviewOpen(true)
       setPrimaryMode(target.primaryMode); setMobilePane('collab')
       if (target.taskView) setTaskView(target.taskView)
       if (target.recordView) setRecordView(target.recordView)
@@ -277,7 +327,7 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
       if (target.error) setNotice(target.error)
     }
     resolve(); window.addEventListener('hashchange', resolve); return () => window.removeEventListener('hashchange', resolve)
-  }, [requirements, selected?.id, selected?.version.markdown, draft])
+  }, [requirements, selected?.id, selected?.version.markdown, draft, loading, loadError])
   useEffect(() => {
     if (!deepLinkObjectId) return
     let located = false
@@ -294,18 +344,54 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
     return () => { timers.forEach(window.clearTimeout); window.clearTimeout(cleanupTimer) }
   }, [deepLinkObjectId, selected?.id, primaryMode, taskView, recordView])
 
+  const openIdentity = (): void => setIdentityDraft(participant)
+  const openCreate = (): void => {
+    const onlyWorkspace = reviewWorkspaces.length === 1 ? reviewWorkspaces[0] : undefined
+    if (onlyWorkspace) setCreateForm(current => current.workspaceId ? current : { ...current, workspaceId: onlyWorkspace.workspaceId })
+    if (reviewWorkspaces.length === 0) loadWorkspaces()
+    setCreateOpen(true)
+  }
+  const saveIdentity = (): void => {
+    if (!identityDraft) return
+    const identity = { ...identityDraft, nickname: identityDraft.nickname.trim(), role: boundRole ?? identityDraft.role }
+    setParticipant(identity)
+    setIdentityDraft(undefined)
+    if (continueAfterIdentity.current === 'create') {
+      continueAfterIdentity.current = undefined
+      openCreate()
+      return
+    }
+    if (selected) {
+      void api.action({ kind: 'participant.register', participant: identity, requirementId: selected.id }).then(result => {
+        if (!result.ok) throw new Error(result.error)
+        return refresh()
+      }).catch(error => setNotice(`登记失败：${error instanceof Error ? error.message : String(error)}`))
+    }
+  }
+
   const act = async (factory: (actor: ParticipantSnapshot) => CollaborationAction): Promise<boolean> => {
-    if (!registered) { setIdentityOpen(true); setNotice('首次写操作前请登记花名'); return false }
+    if (!registered) { openIdentity(); setNotice('首次写操作前请登记花名'); return false }
     setBusy(true); setNotice('')
     try {
-      const result = await api.action(factory(participant))
+      const action = factory(participant)
+      const result = await api.action(action)
       if (!result.ok) {
         if (result.conflict) { setSaveConflict(result.conflict); setMergeDraft(result.conflict.draftMarkdown); setNotice('检测到并发修改。请在三方对比中合并后再提交。'); return false }
         setNotice(friendlyActionError(result.error)); return false
       }
       setSaveConflict(undefined)
-      if (result.deletedRequirementId) { selectedIdRef.current = undefined; setSelectedId(undefined); setSelectedRequirement(undefined); await refresh() }
-      else { selectedIdRef.current = result.requirement.id; setSelectedId(result.requirement.id); setSelectedRequirement(result.requirement); await refresh(result.requirement.id) }
+      if (result.deletedRequirementId === selectedIdRef.current && result.deletedRequirementId !== undefined) {
+        selectId(undefined)
+        setSelectedRequirement(undefined)
+        setScreen('library')
+      } else if (action.kind === 'requirement.create') {
+        selectId(result.requirement.id)
+        setSelectedRequirement(result.requirement)
+      } else if (result.requirement.id === selectedIdRef.current && result.revision >= lastRevision.current) {
+        setSelectedRequirement(result.requirement)
+      }
+      lastRevision.current = Math.max(lastRevision.current, result.revision)
+      await refresh()
       return true
     }
     catch (error) { setNotice(`操作失败：${error instanceof Error ? error.message : String(error)}`); return false }
@@ -313,39 +399,70 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   }
 
   const performNavigation = (navigation: PendingNavigation): void => {
-    if (navigation.kind === 'select') { setSelectedId(navigation.requirementId); setPrimaryMode('tasks'); setDocumentDrawerOpen(false); return }
-    if (navigation.kind === 'toggle-archive') { setShowArchived(value => !value); setSelectedId(undefined); setManageMenuId(undefined); return }
+    if (navigation.kind === 'select') {
+      if (navigation.requirementId !== selectedIdRef.current) {
+        selectId(navigation.requirementId)
+        setPrimaryMode('tasks')
+        setTaskView('review')
+        setRecordView('decisions')
+      }
+      setScreen('workspace')
+      setMobilePane('spec')
+      return
+    }
+    if (navigation.kind === 'create') {
+      if (registered) openCreate()
+      else { continueAfterIdentity.current = 'create'; openIdentity() }
+      return
+    }
     if (navigation.kind === 'deep-link') { approvedDeepLinkHash.current = navigation.hash; window.dispatchEvent(new HashChangeEvent('hashchange')); return }
     if (navigation.kind === 'archive') { void archiveRequirementById(navigation.requirementId, navigation.archived); return }
     if (location.hash.startsWith('#spec-collab/')) { history.replaceState(history.state, '', `${location.pathname}${location.search}`); resolvedDeepLinkHash.current = '' }
     onClose()
   }
   const requestNavigation = (navigation: PendingNavigation): void => {
-    if (selected && draft !== selected.version.markdown) { setPendingNavigation(navigation); return }
+    const staysOnRequirement = navigation.kind === 'select' && navigation.requirementId === selectedIdRef.current
+    if (!staysOnRequirement && selected && draftContextKey && draft !== selected.version.markdown) { setPendingNavigation(navigation); return }
     performNavigation(navigation)
   }
   const leaveWithDraft = async (discard: boolean): Promise<void> => {
     if (!pendingNavigation) return
     const navigation = pendingNavigation; setPendingNavigation(undefined)
-    if (discard && selected) { void deleteDraft(selected.id, participant.participantId); setDraft(selected.version.markdown); setSummary(''); setDraftSavedAt(undefined) }
-    else if (selected && draft !== selected.version.markdown) { const updatedAt = Date.now(); await saveDraft({ requirementId: selected.id, participantId: participant.participantId, baseCommit: selected.currentCommit, markdown: draft, summary, updatedAt }); setDraftSavedAt(updatedAt) }
+    if (discard && selected) {
+      draftOnExit.current = undefined
+      await deleteDraft(selected.id, participant.participantId)
+      setDraft(selected.version.markdown)
+      setDraftBaseCommit(selected.currentCommit)
+      setSummary('')
+      setDraftSavedAt(undefined)
+    } else if (draftOnExit.current) {
+      await saveDraft(draftOnExit.current)
+    }
     performNavigation(navigation)
   }
   const selectRequirement = (id: string): void => requestNavigation({ kind: 'select', requirementId: id })
   const closeWorkbench = (): void => requestNavigation({ kind: 'close' })
-  useEffect(() => { const requestClose = (event: Event): void => { event.preventDefault(); closeWorkbench() }; document.addEventListener('dsh-spec-collab-request-close', requestClose); return () => document.removeEventListener('dsh-spec-collab-request-close', requestClose) }, [selected?.id, selected?.version.markdown, draft])
   const toggleFocusMode = (): void => {
-    if (!focusMode) { previousPaneState.current = { documents: documentsOpen, review: reviewOpen }; setDocumentsOpen(false); setReviewOpen(false); setMobilePane('spec'); setFocusMode(true) }
-    else { setDocumentsOpen(previousPaneState.current.documents); setReviewOpen(previousPaneState.current.review); setFocusMode(false) }
+    if (!focusMode) setMobilePane('spec')
+    setFocusMode(value => !value)
   }
 
   const create = async (): Promise<void> => {
     const links = createForm.sources.split('\n').map(value => value.trim()).filter(Boolean)
     const ok = await act(actor => ({ kind: 'requirement.create', participant: actor, title: createForm.title, rawRequirement: createForm.rawRequirement, workspaceId: createForm.workspaceId, sources: links.map((label, index) => ({ id: `source-${index + 1}`, sourceType: /^https?:/.test(label) ? 'link' : 'text', label, ...(/^https?:/.test(label) ? { stableId: label } : {}), accessStatus: /^https?:/.test(label) ? 'unverified' : 'available' })) }))
-    if (ok) { setCreateOpen(false); setCreateForm({ title: '', rawRequirement: '', sources: '', workspaceId: '' }); setPrimaryMode('tasks'); setTaskView('review') }
+    if (ok) { setScreen('workspace'); setMobilePane('spec'); setCreateOpen(false); setCreateForm({ title: '', rawRequirement: '', sources: '', workspaceId: '' }); setPrimaryMode('tasks'); setTaskView('review') }
   }
   const bindWorkspace = async (): Promise<void> => { if (!selected || !bindWorkspaceId) return; if (await act(actor => ({ kind: 'requirement.bind-workspace', participant: actor, requirementId: selected.id, workspaceId: bindWorkspaceId }))) { setBindWorkspaceOpen(false); setBindWorkspaceId('') } }
-  const save = async (): Promise<void> => { if (!selected) return; const ok = await act(actor => ({ kind: 'version.save', participant: actor, requirementId: selected.id, baseCommit: selected.currentCommit, markdown: draft, summary })); if (ok) { await deleteDraft(selected.id, participant.participantId); setDraftSavedAt(undefined); setSummary(''); setNotice('已保存到版本库，并创建新的 Git commit') } }
+  const save = async (): Promise<void> => {
+    if (!selected || !draftBaseCommit || busy) return
+    if (await act(actor => ({ kind: 'version.save', participant: actor, requirementId: selected.id, baseCommit: draftBaseCommit, markdown: draft, summary }))) {
+      draftOnExit.current = undefined
+      await deleteDraft(selected.id, participant.participantId)
+      setDraftSavedAt(undefined)
+      setSummary('')
+      setNotice('已保存新版本')
+    }
+  }
   const requestReview = async (reviewKind: ReviewKind): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'review.request', participant: actor, requirementId: selected.id, reviewKind })) }
   const confirm = async (role: ParticipantRole): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'confirmation.create', participant: actor, requirementId: selected.id, role, scope: 'version' })) }
   const advance = async (): Promise<void> => { if (!selected) return; await act(actor => ({ kind: 'stage.advance', participant: actor, requirementId: selected.id })) }
@@ -401,9 +518,7 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
   const executeWorkflow = async (command: WorkflowCommand): Promise<void> => {
     if (!selected || command.kind === 'none') return
     if (command.kind === 'open') {
-      setPrimaryMode('tasks')
-      setTaskView(command.view)
-      setMobilePane('collab')
+      openTaskView(command.view)
       if (command.view === 'ready') revealReadyPackage()
       if (command.view === 'review' && command.objectId) openReviewItem(command.objectId)
       return
@@ -417,60 +532,52 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
     const command = pendingWorkflow; setPendingWorkflow(undefined)
     if (command.kind === 'advance') { await advance(); return }
     if (command.kind === 'confirm') { await confirm(command.role); return }
-    setTaskView('ready')
+    openTaskView('ready')
     await act(actor => ({ kind: 'ready.generate', participant: actor, requirementId: selected.id }))
   }
   const openMyItem = (item: MyActionItem): void => {
     if (item.target.tab === 'review') { openReviewItem(item.target.objectId); return }
     if (item.target.tab === 'discussion') { openCommentItem(item.target.objectId); return }
-    else if (item.target.tab === 'decisions') { setPrimaryMode('records'); setRecordView('decisions') }
-    else { setPrimaryMode('tasks'); setTaskView(item.target.tab === 'patches' ? 'patches' : item.target.tab === 'ready' ? 'ready' : 'review') }
-    setMobilePane('collab')
+    else if (item.target.tab === 'decisions') openRecordView('decisions')
+    else openTaskView(item.target.tab === 'patches' ? 'patches' : item.target.tab === 'ready' ? 'ready' : 'review')
     scrollToCollabObject(item.target.objectId)
   }
   const openTaskView = (view: TaskView): void => {
     setPrimaryMode('tasks')
     setTaskView(view)
-    setReviewOpen(true)
-    setMobilePane('collab')
-  }
-  const openDiscussionView = (): void => {
-    setPrimaryMode('discussion')
+    setFocusMode(false)
     setReviewOpen(true)
     setMobilePane('collab')
   }
   const openRecordView = (view: RecordView): void => {
     setPrimaryMode('records')
     setRecordView(view)
+    setFocusMode(false)
     setReviewOpen(true)
     setMobilePane('collab')
   }
-  const resizePane = (side: 'documents' | 'review', event: ReactPointerEvent<HTMLDivElement>): void => {
+  const reviewDrag = useRef<{ start: number; width: number }>()
+  const resizeReview = (event: ReactPointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
-    const startX = event.clientX; const startWidth = side === 'documents' ? documentsWidth : reviewWidth
-    const move = (pointer: PointerEvent): void => {
-      const next = startWidth + (pointer.clientX - startX) * (side === 'documents' ? 1 : -1)
-      if (side === 'documents') setDocumentsWidth(Math.min(360, Math.max(160, next)))
-      else setReviewWidth(Math.min(600, Math.max(320, next)))
-    }
-    const stop = (): void => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); document.body.style.cursor = '' }
-    document.body.style.cursor = 'col-resize'; window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    reviewDrag.current = { start: event.clientX, width: reviewWidth }
   }
-  const resizePaneWithKeyboard = (side: 'documents' | 'review', event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    const current = side === 'documents' ? documentsWidth : reviewWidth; const min = side === 'documents' ? 160 : 320; const max = side === 'documents' ? 360 : 600
-    let next: number | undefined
-    if (event.key === 'Home') next = min
-    else if (event.key === 'End') next = max
-    else if (event.key === 'ArrowLeft') next = current + (side === 'documents' ? -1 : 1) * (event.shiftKey ? 64 : 16)
-    else if (event.key === 'ArrowRight') next = current + (side === 'documents' ? 1 : -1) * (event.shiftKey ? 64 : 16)
-    if (next === undefined) return
-    event.preventDefault(); const value = Math.max(min, Math.min(max, next)); if (side === 'documents') setDocumentsWidth(value); else setReviewWidth(value)
+  const moveReview = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const drag = reviewDrag.current
+    if (drag) setReviewWidth(Math.max(320, Math.min(600, drag.width + drag.start - event.clientX)))
+  }
+  const resizeReviewWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const offset = event.shiftKey ? 64 : 16
+    const width = { Home: 320, End: 600, ArrowLeft: reviewWidth + offset, ArrowRight: reviewWidth - offset }[event.key]
+    if (width === undefined) return
+    event.preventDefault()
+    setReviewWidth(Math.max(320, Math.min(600, width)))
   }
   const renameRequirement = async (): Promise<void> => { if (!manageTarget) return; if (await act(actor => ({ kind: 'requirement.rename', participant: actor, requirementId: manageTarget.id, title: renameTitle }))) { setRenameOpen(false); setManageTargetId(undefined) } }
-  const archiveRequirementById = async (requirementId: string, archived: boolean): Promise<void> => { if (await act(actor => ({ kind: 'requirement.archive', participant: actor, requirementId, archived }))) { setManageMenuId(undefined); setSelectedId(visibleRequirements.find(item => item.id !== requirementId)?.id); if (archived) { setUndoArchiveId(requirementId); setNotice('需求已归档，Git 历史仍然保留'); window.setTimeout(() => setUndoArchiveId(current => current === requirementId ? undefined : current), 8_000) } } }
+  const archiveRequirementById = async (requirementId: string, archived: boolean): Promise<void> => { if (await act(actor => ({ kind: 'requirement.archive', participant: actor, requirementId, archived }))) { if (archived) { setUndoArchiveId(requirementId); setNotice('需求已归档，Git 历史仍然保留'); window.setTimeout(() => setUndoArchiveId(current => current === requirementId ? undefined : current), 8_000) } } }
   const archiveRequirement = async (target: RequirementSummary): Promise<void> => { const navigation: PendingNavigation = { kind: 'archive', requirementId: target.id, archived: !target.archivedAt }; if (selected?.id === target.id && draft !== selected.version.markdown) { setPendingNavigation(navigation); return }; await archiveRequirementById(navigation.requirementId, navigation.archived) }
-  const undoArchive = async (): Promise<void> => { if (!undoArchiveId) return; const id = undoArchiveId; if (await act(actor => ({ kind: 'requirement.unarchive', participant: actor, requirementId: id }))) { setUndoArchiveId(undefined); setShowArchived(false); setSelectedId(id); setNotice('已撤销归档') } }
-  const deleteRequirement = async (): Promise<void> => { if (!manageTarget) return; if (await act(actor => ({ kind: 'requirement.delete', participant: actor, requirementId: manageTarget.id }))) { setDeleteOpen(false); setManageMenuId(undefined); setManageTargetId(undefined) } }
+  const undoArchive = async (): Promise<void> => { if (!undoArchiveId) return; const id = undoArchiveId; if (await act(actor => ({ kind: 'requirement.unarchive', participant: actor, requirementId: id }))) { setUndoArchiveId(undefined); setNotice('已撤销归档') } }
+  const deleteRequirement = async (): Promise<void> => { if (!manageTarget) return; if (await act(actor => ({ kind: 'requirement.delete', participant: actor, requirementId: manageTarget.id }))) { setDeleteOpen(false); setManageTargetId(undefined) } }
 
   const updateDraftSelection = (value?: EditorSelection): void => {
     if (!value) {
@@ -497,48 +604,73 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
     if (await act(actor => ({ kind: 'comment.create', participant: actor, requirementId: selected.id, commit: selected.currentCommit, scope: 'page', body: pageCommentText.trim(), mentions }))) { setPageCommentOpen(false); setPageCommentText(''); setPrimaryMode('discussion'); setReviewOpen(true); setMobilePane('collab'); setNotice('页面总评已提交') }
   }
 
+  const dirty = selected !== undefined && draftContextKey !== undefined && draft !== selected.version.markdown
+  const unreadCount = notifications.filter(item => item.readAt === undefined).length
+  const workspaceTitle = reviewWorkspaces.find(workspace => workspace.workspaceId === selected?.workspaceId)?.title
+  const showLibrary = (): void => {
+    setScreen('library')
+    setInlineReview(undefined)
+    setDraftSelection(undefined)
+    setFocusMode(false)
+  }
+
   return <div ref={workbenchRef} className={`${css.workbench} ${focusMode ? css.focusMode : ''}`}>
     <header className={css.header}>
-      <div className={css.titleBlock}>
-        <span className={css.productName}>需求共创</span>
-        <strong>{selected?.title ?? '把模糊需求变成可交付规范'}</strong>
-        {selected && <span>{reviewWorkspaces.find(workspace => workspace.workspaceId === selected.workspaceId)?.title ?? (selected.workspaceId ? '项目已关联' : '未关联项目')} · 版本 {selected.currentCommit.slice(0, 8)}</span>}
+      <div className={css.deskNavigation}>
+        <span className={css.deskMark} aria-hidden="true"><i/><i/><i/></span>
+        <nav aria-label="需求工作台导航">
+          <button aria-current={screen === 'library' ? 'page' : undefined} onClick={showLibrary}>需求库</button>
+          {selectedId && <button aria-current={screen === 'workspace' ? 'page' : undefined} onClick={() => setScreen('workspace')}>工作台</button>}
+        </nav>
       </div>
-      {selected && <StageRail stage={selected.stage}/>}
       <div className={css.headerActions}>
-        <button className={css.quietButton} aria-label="返回聊天" onClick={closeWorkbench}><span aria-hidden="true">←</span><span className={css.backLabel}>返回聊天</span></button>
-        <button className={css.quietButton} aria-pressed={focusMode} title="聚焦正文（⌘⇧F）" onClick={toggleFocusMode}>{focusMode ? '退出聚焦' : '聚焦正文'}</button>
-        {registered && <button className={css.myWorkButton} onClick={() => setMyWorkOpen(true)}>我的工作{myItems.length + notifications.filter(item => item.readAt === undefined).length > 0 && <b>{myItems.length + notifications.filter(item => item.readAt === undefined).length}</b>}</button>}
-        {registered && <button className={css.notificationButton} aria-label={`通知，${notifications.filter(item => item.readAt === undefined).length} 条未读`} onClick={() => setNotificationsOpen(true)}>通知{notifications.some(item => item.readAt === undefined) && <b>{notifications.filter(item => item.readAt === undefined).length}</b>}</button>}
-        <button className={css.identity} onClick={() => setIdentityOpen(true)}>{registered ? `${participant.nickname} · ${participant.role === 'product' ? '产品' : '研发'}` : '登记身份'}</button>
+        {registered && <button className={css.myWorkButton} onClick={() => setMyWorkOpen(true)}>我的工作{myItems.length > 0 && <b>{myItems.length}</b>}</button>}
+        {registered && <button className={css.notificationButton} aria-label={`通知，${unreadCount} 条未读`} onClick={() => setNotificationsOpen(true)}>通知{unreadCount > 0 && <b>{unreadCount}</b>}</button>}
+        <button className={css.identity} onClick={openIdentity}>{registered ? `${participant.nickname} · ${participant.role === 'product' ? '产品' : '研发'}` : '登记身份'}</button>
+        <button className={css.quietButton} aria-label="返回聊天" title="返回聊天" onClick={closeWorkbench}><span aria-hidden="true">↗</span><span className={css.backLabel}>返回聊天</span></button>
       </div>
     </header>
-    <div className={notice ? css.notice : css.noticeHidden} role={assertiveNotice ? 'alert' : 'status'} aria-live={assertiveNotice ? 'assertive' : 'polite'} aria-atomic="true"><span>{notice}</span>{undoArchiveId && <button onClick={() => void undoArchive()}>撤销归档</button>}<button aria-label="关闭" onClick={() => setNotice('')}>×</button></div>
-    <div className={css.mobileViewSwitch}><button className={css.mobileDocumentsTrigger} onClick={() => setDocumentDrawerOpen(true)}>需求列表</button><button className={mobilePane === 'spec' ? css.activeMode : ''} onClick={() => setMobilePane('spec')}>需求正文</button><button className={mobilePane === 'collab' ? css.activeMode : ''} onClick={() => setMobilePane('collab')}>协作{currentMyItems.length > 0 ? ` · ${currentMyItems.length}` : ''}</button></div>
-    <div className={`${css.grid} ${mobilePane === 'spec' ? css.mobileSpec : css.mobileCollab}`} style={{ '--documents-width': documentsOpen ? `${documentsWidth}px` : '0px', '--documents-handle': documentsOpen ? '6px' : '0px', '--review-width': reviewOpen ? `${reviewWidth}px` : '0px', '--review-handle': reviewOpen ? '6px' : '0px' } as CSSProperties}>
-      <aside className={`${css.documents} ${documentsOpen ? '' : css.paneClosed} ${documentDrawerOpen ? css.mobileDocumentsOpen : ''}`} aria-label="需求列表">
-        <div className={css.paneHead}><strong>{showArchived ? '已归档' : '需求'}</strong><div className={css.paneActions}><button onClick={() => requestNavigation({ kind: 'toggle-archive' })}>{showArchived ? '返回进行中' : '查看归档'}</button>{!showArchived && <button className={css.createButton} aria-label="新建需求" title="新建需求" onClick={() => { setCreateOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))) }}>＋</button>}<button className={css.mobileDrawerClose} aria-label="关闭需求列表" onClick={() => setDocumentDrawerOpen(false)}>×</button><button className={css.iconButton} aria-label="收起需求栏" title="收起需求栏" onClick={() => setDocumentsOpen(false)}>‹</button></div></div>
-        <div className={css.requirementFilters}>
-          <label className={css.requirementSearch}>搜索需求<input type="search" value={requirementQuery} onChange={event => setRequirementQuery(event.target.value)} placeholder="标题或编号"/></label>
-          <div><label>阶段<select value={requirementFilters.stage} onChange={event => setRequirementFilters(current => ({ ...current, stage: event.target.value as typeof current.stage }))}><option value="all">全部阶段</option>{stageSteps.map(item => <option key={item.stage} value={item.stage}>{item.label}</option>)}</select></label><label>参与者<select value={requirementFilters.participantId} onChange={event => setRequirementFilters(current => ({ ...current, participantId: event.target.value }))}><option value="">全部参与者</option>{participantBindings.map(person => <option key={person.participantId} value={person.participantId}>{person.nickname}</option>)}</select></label></div>
-          <div className={css.filterChecks}><label><input type="checkbox" checked={requirementFilters.risk} onChange={event => setRequirementFilters(current => ({ ...current, risk: event.target.checked }))}/>有风险</label><label><input type="checkbox" checked={requirementFilters.unread} onChange={event => setRequirementFilters(current => ({ ...current, unread: event.target.checked }))}/>有未读</label><label><input type="checkbox" checked={requirementFilters.insights} onChange={event => setRequirementFilters(current => ({ ...current, insights: event.target.checked }))}/>有洞察</label></div>
-          {(activeRequirementFilterCount > 0 || normalizedQuery) && <div className={css.activeFilters}><span>{activeRequirementFilterCount + Number(Boolean(normalizedQuery))} 个筛选条件生效</span><button onClick={() => { setRequirementQuery(''); setRequirementFilters({ stage: 'all', participantId: '', risk: false, unread: false, insights: false }) }}>清除全部</button></div>}
+    <div className={notice ? css.notice : css.noticeHidden} role={assertiveNotice ? 'alert' : 'status'} aria-live={assertiveNotice ? 'assertive' : 'polite'} aria-atomic="true"><span>{notice}</span>{undoArchiveId && <button onClick={() => void undoArchive()}>撤销归档</button>}<button aria-label="关闭提示" onClick={() => setNotice('')}>×</button></div>
+    <div className={css.libraryRegion} hidden={screen !== 'library'}>
+      <RequirementLibrary requirements={requirements} workspaces={reviewWorkspaces} participants={participantBindings} notifications={notifications}
+        loading={loading} error={loadError} activeId={selectedId} onCreate={() => requestNavigation({ kind: 'create' })} onRetry={() => void refresh()} onOpen={selectRequirement}
+        onRename={item => { setManageTargetId(item.id); setRenameTitle(item.title); setRenameOpen(true) }}
+        onArchive={item => void archiveRequirement(item)} onDelete={item => { setManageTargetId(item.id); setDeleteOpen(true) }}/>
+    </div>
+    {screen === 'workspace' && (selected ? <section className={css.workspace} aria-label="需求工作台">
+      <header className={css.workspaceTop}>
+        <div className={css.workspaceIdentity}>
+          <div><span>{workspaceTitle ?? (selected.workspaceId ? '已关联工作区' : '未关联工作区')}</span><button title={selected.currentCommit} onClick={() => openRecordView('versions')}>{selected.currentCommit.slice(0, 8)}</button>{selected.archivedAt !== undefined && <span>已归档</span>}</div>
+          <h1 ref={workspaceHeading} tabIndex={-1}>{selected.title}</h1>
         </div>
-        <nav>{visibleRequirements.map(item => <div className={css.requirementRow} key={item.id}><button className={`${css.documentButton} ${item.id === selected?.id ? css.selectedDoc : ''}`} onClick={() => selectRequirement(item.id)}><span>{item.title}</span><small><i className={`${css.statusDot} ${css[`stage_${item.stage}`]}`}/>{item.archivedAt ? `归档于 ${new Date(item.archivedAt).toLocaleDateString()}` : `${stageLabel(item.stage)}${item.metrics.pendingActionCount > 0 ? ` · ${item.metrics.pendingActionCount} 项待处理` : ''}`}</small></button><button className={css.rowMenuButton} aria-label={`${item.title} 更多操作`} title="更多操作" onClick={() => { selectRequirement(item.id); setManageMenuId(current => current === item.id ? undefined : item.id) }}>…</button>{manageMenuId === item.id && <div className={css.requirementMenu}><button onClick={() => { setManageTargetId(item.id); setRenameTitle(item.title); setRenameOpen(true); setManageMenuId(undefined) }}>重命名</button><button onClick={() => void archiveRequirement(item)}>{item.archivedAt ? '取消归档' : '归档需求'}</button><button className={css.dangerText} onClick={() => { setManageTargetId(item.id); setDeleteOpen(true); setManageMenuId(undefined) }}>删除需求</button></div>}</div>)}</nav>
-        {visibleRequirements.length === 0 && <div className={css.emptyList}><strong>{showArchived ? '还没有归档需求' : '从一个真实问题开始'}</strong><p>{showArchived ? '归档后的需求会出现在这里。' : '输入原始需求，AI 会先帮你找出缺口。'}</p>{!showArchived && <button onClick={() => { setCreateOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))) }}>新建需求</button>}</div>}
-      </aside>
-      <div className={`${css.resizer} ${documentsOpen ? '' : css.resizerHidden}`} role="separator" aria-label="调整需求栏宽度" aria-orientation="vertical" aria-valuemin={160} aria-valuemax={360} aria-valuenow={documentsWidth} tabIndex={documentsOpen ? 0 : -1} onKeyDown={event => resizePaneWithKeyboard('documents', event)} onPointerDown={event => resizePane('documents', event)}/>
-      <main className={css.editorPane}>
-        <div className={css.toolbar}><div className={css.editorTitle}><button className={css.mobileDocumentsTrigger} aria-label="打开需求列表" onClick={() => setDocumentDrawerOpen(true)}>☰</button>{!documentsOpen && <button className={css.iconButton} aria-label="展开需求栏" title="展开需求栏" onClick={() => setDocumentsOpen(true)}>›</button>}<div><span>正式需求</span><strong>需求正文 · 可编辑</strong></div></div><div><span className={draft !== selected?.version.markdown ? css.unsaved : css.editorMeta}>{draft !== selected?.version.markdown ? `本地草稿${draftSavedAt ? ` · ${relativeTime(draftSavedAt)}` : ''}` : '已保存到版本库'}</span><label className={css.summaryField}>本次改动<input className={css.summaryInput} required value={summary} onChange={event => setSummary(event.target.value)} placeholder="例如：补充退款边界"/></label><button title={!selected ? '请先选择需求' : draft === selected.version.markdown ? '正文没有变化' : !summary.trim() ? '请填写本次改动说明' : '保存到版本库（⌘S）'} className={css.saveButton} disabled={busy || !selected || draft === selected.version.markdown || !summary.trim()} onClick={() => void save()}>保存到版本库</button><button onClick={() => setPageCommentOpen(true)} disabled={!selected}>评论整篇</button>{!reviewOpen && <button className={css.iconButton} aria-label="展开协作面板" title="展开协作面板" onClick={() => setReviewOpen(true)}>‹</button>}</div></div>
+        <div className={css.workspaceTools}>
+          <button aria-pressed={focusMode} title="聚焦正文（⌘⇧F）" onClick={toggleFocusMode}>{focusMode ? '退出聚焦' : '聚焦正文'}</button>
+          {!focusMode && <button className={css.inspectorToggle} aria-expanded={reviewOpen} onClick={() => setReviewOpen(value => !value)}>{reviewOpen ? '收起协作' : '展开协作'}</button>}
+        </div>
+        {!focusMode && <div className={css.workspaceProgress}>
+          <StageTrack stage={selected.stage}/>
+          {workflow && <WorkflowFocus state={workflow} onExecute={() => void executeWorkflow(workflow.command)}/>}
+        </div>}
+      </header>
+      {!focusMode && <div className={css.mobileViewSwitch} role="group" aria-label="需求视图"><button aria-pressed={mobilePane === 'spec'} onClick={() => setMobilePane('spec')}>需求正文</button><button aria-pressed={mobilePane === 'collab'} onClick={() => { setReviewOpen(true); setMobilePane('collab') }}>协作{currentMyItems.length > 0 ? ` · ${currentMyItems.length}` : ''}</button></div>}
+      <div className={`${css.grid} ${mobilePane === 'spec' ? css.mobileSpec : css.mobileCollab}`} style={{ '--review-width': reviewOpen && !focusMode ? `${reviewWidth}px` : '0px', '--review-handle': reviewOpen && !focusMode ? '10px' : '0px' } as CSSProperties}>
+        <main className={css.editorPane} aria-label="需求正文">
+          <div className={css.toolbar}>
+            <div className={css.editorTitle}><strong>需求正文</strong><span className={dirty ? css.unsaved : css.editorMeta}>{dirty ? `本地草稿${draftSavedAt ? ` · ${relativeTime(draftSavedAt)}` : ''}` : '已保存'}</span></div>
+            <div className={css.editorActions}>
+              {dirty && <label className={css.summaryField}><span className={css.srOnly}>本次改动</span><input className={css.summaryInput} required value={summary} onChange={event => setSummary(event.target.value)} placeholder="本次改动说明"/></label>}
+              <button onClick={() => setPageCommentOpen(true)}>评论整篇</button>
+              {dirty && <button title={!summary.trim() ? '请填写本次改动说明' : '保存到版本库（⌘S）'} className={css.primaryAction} disabled={busy || !summary.trim()} onClick={() => void save()}>保存版本</button>}
+            </div>
+          </div>
         {draftSelection && <InlineCommentComposer selection={draftSelection} text={commentText} setText={setCommentText} busy={busy} cancel={cancelCommentDraft} submit={addComment}/>}
         {inlineReviewItem && inlineReview?.rect && inlineReview.placement && <InlineReviewComposer item={inlineReviewItem} sourceMarkdown={selected?.version.markdown ?? ''} requirementId={selected?.id ?? ''} position={{ rect: inlineReview.rect, placement: inlineReview.placement, ...(inlineReview.maxHeight ? { maxHeight: inlineReview.maxHeight } : {}) }} nextItemId={nextInlineReview?.id} busy={busy} act={act} close={() => setInlineReview(undefined)} locateSource={sourceKey => locateReviewItem(inlineReviewItem.id, sourceKey)} complete={continueToNext => { if (continueToNext && nextInlineReview) openReviewItem(nextInlineReview.id); else setInlineReview(undefined) }}/>}
-        {!selected ? <div className={css.emptyMain}><div><span>从问题到共识</span><h2>创建第一份需求</h2><p>写下用户问题和期望结果，AI 会协助补齐范围、规则与验收标准。</p><button className={css.execute} onClick={() => { setCreateOpen(true); void api.reviewWorkspaces().then(setReviewWorkspaces, error => setNotice(error instanceof Error ? error.message : String(error))) }}>新建需求</button></div></div> : <><DocumentCollabBar activeMode={primaryMode} activeTaskView={taskView} activeRecordView={recordView} stats={{ openReviews: openReviewCount, blockingReviews: blockingReviewCount, openDiscussions, pendingPatches: pendingPatches.length, activeDecisions: activeDecisionCount, invalidatedDecisions: invalidatedDecisionCount, runningAi: runningAiCount, dirty: draft !== selected.version.markdown }} onOpenReviews={() => openTaskView('review')} onOpenDiscussion={openDiscussionView} onOpenPatches={() => openTaskView('patches')} onOpenDecisions={() => openRecordView('decisions')}/><div className={css.editorBody}><RichMarkdownEditor key={`${selected.id}:${selected.currentCommit}`} markdown={draft} reviewItems={documentReviews} comments={documentComments} documentFocus={documentFocus} focusRequest={documentFocusRequest} onChange={setDraft} onSelection={updateDraftSelection} onOpenReview={openReviewItem} onReviewLocated={updateInlineReviewPosition} onOpenComment={openCommentItem}/></div></>}
-      </main>
-      <div className={`${css.resizer} ${reviewOpen ? '' : css.resizerHidden}`} role="separator" aria-label="调整协作栏宽度" aria-orientation="vertical" aria-valuemin={320} aria-valuemax={600} aria-valuenow={reviewWidth} tabIndex={reviewOpen ? 0 : -1} onKeyDown={event => resizePaneWithKeyboard('review', event)} onPointerDown={event => resizePane('review', event)}/>
+          <div className={css.editorBody}><RichMarkdownEditor key={`${selected.id}:${selected.currentCommit}`} markdown={draft} reviewItems={documentReviews} comments={documentComments} documentFocus={documentFocus} focusRequest={documentFocusRequest} onChange={setDraft} onSelection={updateDraftSelection} onOpenReview={openReviewItem} onReviewLocated={updateInlineReviewPosition} onOpenComment={openCommentItem}/></div>
+        </main>
+        {reviewOpen && !focusMode && <div className={css.resizer} role="separator" aria-label="调整协作栏宽度" aria-orientation="vertical" aria-valuemin={320} aria-valuemax={600} aria-valuenow={reviewWidth} tabIndex={0} onKeyDown={resizeReviewWithKeyboard} onPointerDown={resizeReview} onPointerMove={moveReview} onLostPointerCapture={() => { reviewDrag.current = undefined }}/>}
       <aside className={`${css.review} ${reviewOpen ? '' : css.paneClosed}`} aria-label="需求协作">
-        <div className={css.primaryNav}><div role="tablist" aria-label="协作视图" onKeyDown={event => handleTabs(event, ['tasks', 'discussion', 'insights', 'records'], primaryMode, setPrimaryMode)}><button id="collab-tab-tasks" aria-controls="collab-panel-tasks" role="tab" tabIndex={primaryMode === 'tasks' ? 0 : -1} aria-selected={primaryMode === 'tasks'} className={primaryMode === 'tasks' ? css.activeMode : ''} onClick={() => setPrimaryMode('tasks')}>下一步{currentMyItems.length > 0 && <span className={css.tabBadge}>{currentMyItems.length}</span>}</button><button id="collab-tab-discussion" aria-controls="collab-panel-discussion" role="tab" tabIndex={primaryMode === 'discussion' ? 0 : -1} aria-selected={primaryMode === 'discussion'} className={primaryMode === 'discussion' ? css.activeMode : ''} onClick={() => setPrimaryMode('discussion')}>讨论{openDiscussions > 0 && <span className={css.tabBadge}>{openDiscussions}</span>}</button><button id="collab-tab-insights" aria-controls="collab-panel-insights" role="tab" tabIndex={primaryMode === 'insights' ? 0 : -1} aria-selected={primaryMode === 'insights'} className={primaryMode === 'insights' ? css.activeMode : ''} onClick={() => setPrimaryMode('insights')}>洞察{selected && selected.metrics.insightCount > 0 && <span className={css.tabBadge}>{selected.metrics.insightCount}</span>}</button><button id="collab-tab-records" aria-controls="collab-panel-records" role="tab" tabIndex={primaryMode === 'records' ? 0 : -1} aria-selected={primaryMode === 'records'} className={primaryMode === 'records' ? css.activeMode : ''} onClick={() => setPrimaryMode('records')}>记录</button></div><button className={`${css.iconButton} ${css.collapseRight}`} aria-label="收起协作面板" title="收起协作面板" onClick={() => setReviewOpen(false)}>›</button></div>
+        <div className={css.primaryNav}><div role="tablist" aria-label="协作视图" onKeyDown={event => handleTabs(event, ['tasks', 'discussion', 'insights', 'records'], primaryMode, setPrimaryMode)}><button id="collab-tab-tasks" aria-controls="collab-panel-tasks" role="tab" tabIndex={primaryMode === 'tasks' ? 0 : -1} aria-selected={primaryMode === 'tasks'} onClick={() => setPrimaryMode('tasks')}>下一步{currentMyItems.length > 0 && <span className={css.tabBadge}>{currentMyItems.length}</span>}</button><button id="collab-tab-discussion" aria-controls="collab-panel-discussion" role="tab" tabIndex={primaryMode === 'discussion' ? 0 : -1} aria-selected={primaryMode === 'discussion'} onClick={() => setPrimaryMode('discussion')}>讨论{openDiscussions > 0 && <span className={css.tabBadge}>{openDiscussions}</span>}</button><button id="collab-tab-insights" aria-controls="collab-panel-insights" role="tab" tabIndex={primaryMode === 'insights' ? 0 : -1} aria-selected={primaryMode === 'insights'} onClick={() => setPrimaryMode('insights')}>洞察{selected && selected.metrics.insightCount > 0 && <span className={css.tabBadge}>{selected.metrics.insightCount}</span>}</button><button id="collab-tab-records" aria-controls="collab-panel-records" role="tab" tabIndex={primaryMode === 'records' ? 0 : -1} aria-selected={primaryMode === 'records'} onClick={() => setPrimaryMode('records')}>记录</button></div><button className={`${css.iconButton} ${css.collapseRight}`} aria-label="收起协作面板" title="收起协作面板" onClick={() => setReviewOpen(false)}>›</button></div>
         {selected && primaryMode === 'tasks' && <div className={css.tabPanel} id="collab-panel-tasks" role="tabpanel" aria-labelledby="collab-tab-tasks">
-          {workflow && <WorkflowFocus state={workflow} pendingForMe={currentMyItems.length} onExecute={() => void executeWorkflow(workflow.command)}/>}
           {currentMyItems.length > 0 && <TaskQueue items={currentMyItems} open={openMyItem} participants={participantBindings} act={act}/>}
           <div className={css.contextNav} role="tablist" aria-label="待处理内容" onKeyDown={event => handleTabs(event, ['review', 'patches', 'ready'], taskView, setTaskView)}><button id="tasks-tab-review" aria-controls="tasks-panel-review" role="tab" tabIndex={taskView === 'review' ? 0 : -1} aria-selected={taskView === 'review'} className={taskView === 'review' ? css.activeContext : ''} onClick={() => setTaskView('review')}>问题{currentReviews.length > 0 && <span>{currentReviews.length}</span>}</button><button id="tasks-tab-patches" aria-controls="tasks-panel-patches" role="tab" tabIndex={taskView === 'patches' ? 0 : -1} aria-selected={taskView === 'patches'} className={taskView === 'patches' ? css.activeContext : ''} onClick={() => setTaskView('patches')}>AI 建议{pendingPatches.length > 0 && <span>{pendingPatches.length}</span>}</button><button id="tasks-tab-ready" aria-controls="tasks-panel-ready" role="tab" tabIndex={taskView === 'ready' ? 0 : -1} aria-selected={taskView === 'ready'} className={taskView === 'ready' ? css.activeContext : ''} onClick={() => setTaskView('ready')}>完成条件{failedChecks > 0 && <span>{failedChecks}</span>}</button></div>
           <div id={`tasks-panel-${taskView}`} role="tabpanel" aria-labelledby={`tasks-tab-${taskView}`} className={css.threadList}>{taskView === 'review' && <ReviewPanel key={selected.id} requirement={selected} act={act} api={api} focusedItemId={focusedReviewId} openRequest={reviewOpenRequest} onSelectReview={focusReviewItem} onLocateSource={locateReviewItem} onOpenRequestHandled={requestId => setReviewOpenRequest(current => current?.requestId === requestId ? undefined : current)}/>} {taskView === 'patches' && <PatchPanel key={selected.id} requirement={selected} act={act} api={api}/>} {taskView === 'ready' && <ReadyPanel key={selected.id} requirement={selected} act={act}/>}</div>
@@ -546,57 +678,37 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
         {selected && primaryMode === 'discussion' && <div id="collab-panel-discussion" role="tabpanel" aria-labelledby="collab-tab-discussion" className={css.threadList}><DiscussionPanel requirement={selected} notifications={notifications} focusedCommentId={focusedCommentId} onSelectComment={focusCommentItem} onLocateComment={locateCommentItem} act={act} api={api}/></div>}
         {selected && primaryMode === 'insights' && <div id="collab-panel-insights" role="tabpanel" aria-labelledby="collab-tab-insights" className={css.threadList}><InsightPanel key={selected.id} requirement={selected} api={api} act={act}/></div>}
         {selected && primaryMode === 'records' && <div id="collab-panel-records" role="tabpanel" aria-labelledby="collab-tab-records" className={css.tabPanel}><div className={css.contextNav} role="tablist" aria-label="需求记录" onKeyDown={event => handleTabs(event, ['decisions', 'versions'], recordView, setRecordView)}><button id="records-tab-decisions" aria-controls="records-panel-decisions" role="tab" tabIndex={recordView === 'decisions' ? 0 : -1} aria-selected={recordView === 'decisions'} className={recordView === 'decisions' ? css.activeContext : ''} onClick={() => setRecordView('decisions')}>关键决策</button><button id="records-tab-versions" aria-controls="records-panel-versions" role="tab" tabIndex={recordView === 'versions' ? 0 : -1} aria-selected={recordView === 'versions'} className={recordView === 'versions' ? css.activeContext : ''} onClick={() => setRecordView('versions')}>版本历史</button></div><div id={`records-panel-${recordView}`} role="tabpanel" aria-labelledby={`records-tab-${recordView}`} className={css.threadList}>{recordView === 'decisions' && <DecisionPanel key={selected.id} requirement={selected} act={act}/>} {recordView === 'versions' && <VersionPanel key={selected.id} requirement={selected} api={api} act={act}/>}</div></div>}
-        {!selected && <div className={css.emptyAside}><strong>等待创建需求</strong><p>创建后，下一步操作会显示在这里。</p></div>}
-      </aside>
-    </div>
-    <footer className={css.footer}><span>AI 可以检查和建议，最终版本始终由人确认</span><span>{selected ? `${stageLabel(selected.stage)} · ${selected.currentCommit.slice(0, 8)} · ${selected.aiRuns.at(-1)?.status === 'running' ? 'AI 分析中' : '版本已记录'}` : '从原始需求开始'}</span></footer>
-    {identityOpen && <IdentityDialog value={participant} {...(boundRole === undefined ? {} : { boundRole })} onChange={setParticipant} close={() => setIdentityOpen(false)} save={() => { localStorage.setItem('dsh-spec-collab.participant', JSON.stringify(participant)); setIdentityOpen(false); if (selected) void api.action({ kind: 'participant.register', participant, requirementId: selected.id }).then(result => { if (!result.ok) throw new Error(result.error); return refresh() }).catch(error => setNotice(`登记失败：${error instanceof Error ? error.message : String(error)}`)) }}/>} {createOpen && <CreateDialog value={createForm} setValue={setCreateForm} workspaces={reviewWorkspaces} close={() => setCreateOpen(false)} submit={() => void create()} busy={busy}/>} {bindWorkspaceOpen && selected && <WorkspaceDialog value={bindWorkspaceId} setValue={setBindWorkspaceId} workspaces={reviewWorkspaces} close={() => { setBindWorkspaceOpen(false); setBindWorkspaceId('') }} submit={() => void bindWorkspace()} busy={busy}/>} {renameOpen && <RenameDialog title={renameTitle} setTitle={setRenameTitle} close={() => { setRenameOpen(false); setManageTargetId(undefined) }} submit={() => void renameRequirement()} busy={busy}/>} {deleteOpen && manageTarget && <DeleteDialog title={manageTarget.title} close={() => { setDeleteOpen(false); setManageTargetId(undefined) }} submit={() => void deleteRequirement()} busy={busy}/>} {saveConflict && <ConflictDialog conflict={saveConflict} value={mergeDraft} setValue={setMergeDraft} close={() => setSaveConflict(undefined)} busy={busy} submit={() => void act(actor => ({ kind: 'version.save', participant: actor, requirementId: saveConflict.requirementId, baseCommit: saveConflict.currentCommit, markdown: mergeDraft, summary })).then(ok => { if (ok) { setDraft(mergeDraft); setSummary(''); setSaveConflict(undefined); setNotice('冲突已合并并创建新的 Git commit') } })}/>} {pageCommentOpen && selected && <PageCommentDialog value={pageCommentText} setValue={setPageCommentText} close={() => setPageCommentOpen(false)} submit={() => void addPageComment()} busy={busy}/>} {notificationsOpen && <NotificationDialog notifications={notifications} close={() => setNotificationsOpen(false)} open={item => { setNotificationsOpen(false); location.hash = item.deepLink }} markRead={item => void act(actor => ({ kind: 'notification.mark-read', participant: actor, requirementId: item.requirementId, notificationIds: [item.id] }))}/>} {myWorkOpen && <MyWorkDialog items={myItems} notifications={notifications} close={() => setMyWorkOpen(false)} openItem={item => { setMyWorkOpen(false); const tab = item.target.tab; const view = tab === 'discussion' ? 'discussion' : tab === 'decisions' ? 'records' : 'tasks'; location.hash = `#spec-collab/${encodeURIComponent(item.requirementId)}/${view}/${encodeURIComponent(item.target.objectId)}` }} openNotification={item => { setMyWorkOpen(false); location.hash = item.deepLink }}/>} {pendingNavigation && selected && <AccessibleDialog title="处理未保存草稿" close={() => setPendingNavigation(undefined)} className={css.dialogSurface} dismissOnBackdrop={false}><div className={css.dialogForm}><div className={css.dialogHead}><div><span>本地草稿保护</span><h2>离开前如何处理当前草稿？</h2></div><button aria-label="继续编辑" onClick={() => setPendingNavigation(undefined)}>×</button></div><p>草稿已自动保存在此浏览器，尚未写入 Git。保留后可在下次打开此需求时继续；丢弃后无法恢复。</p><div className={css.stickyActions}><button onClick={() => setPendingNavigation(undefined)}>继续编辑</button><button onClick={() => void leaveWithDraft(true)} className={css.dangerText}>丢弃并离开</button><button className={css.execute} onClick={() => void leaveWithDraft(false)}>保留草稿并离开</button></div></div></AccessibleDialog>} {pendingWorkflow && selected && <AccessibleDialog title="确认流程操作" close={() => setPendingWorkflow(undefined)} className={css.dialogSurface}><div className={css.dialogForm}><div className={css.dialogHead}><div><span>流程确认</span><h2>{pendingWorkflow.kind === 'advance' ? `进入${selected.stage === 'product-review' ? '产品确认' : '产研确认'}？` : pendingWorkflow.kind === 'confirm' ? `确认当前版本 ${selected.currentCommit.slice(0, 8)}？` : '生成就绪需求？'}</h2></div><button aria-label="关闭" onClick={() => setPendingWorkflow(undefined)}>×</button></div><p>{pendingWorkflow.kind === 'advance' ? '阶段变化会通知协作者，当前版本和所有历史记录保持可追溯。' : pendingWorkflow.kind === 'confirm' ? '确认只绑定当前 commit；正文再次变化后需要重新确认。' : '将以产品和研发共同确认的当前 commit 生成可下载交付包。'}</p><div className={css.stickyActions}><button onClick={() => setPendingWorkflow(undefined)}>取消</button><button className={css.execute} onClick={() => void confirmWorkflow()}>确认执行</button></div></div></AccessibleDialog>}
+        </aside>
+      </div>
+    </section> : <div className={css.workspaceLoading} role="status">{loadError ?? '正在打开需求…'}<button onClick={showLibrary}>返回需求库</button></div>)}
+    {identityDraft && <IdentityDialog value={identityDraft} {...(boundRole === undefined ? {} : { boundRole })} onChange={setIdentityDraft}
+      close={() => { continueAfterIdentity.current = undefined; setIdentityDraft(undefined) }} save={saveIdentity}/>}
+    {createOpen && <CreateDialog value={createForm} setValue={setCreateForm} workspaces={reviewWorkspaces} close={() => setCreateOpen(false)} submit={() => void create()} busy={busy}/>}
+    {bindWorkspaceOpen && selected && <WorkspaceDialog value={bindWorkspaceId} setValue={setBindWorkspaceId} workspaces={reviewWorkspaces} close={() => { setBindWorkspaceOpen(false); setBindWorkspaceId('') }} submit={() => void bindWorkspace()} busy={busy}/>}
+    {renameOpen && <RenameDialog title={renameTitle} setTitle={setRenameTitle} close={() => { setRenameOpen(false); setManageTargetId(undefined) }} submit={() => void renameRequirement()} busy={busy}/>}
+    {deleteOpen && manageTarget && <DeleteDialog title={manageTarget.title} close={() => { setDeleteOpen(false); setManageTargetId(undefined) }} submit={() => void deleteRequirement()} busy={busy}/>}
+    {saveConflict && <ConflictDialog conflict={saveConflict} value={mergeDraft} setValue={setMergeDraft} close={() => setSaveConflict(undefined)} busy={busy} submit={() => void act(actor => ({ kind: 'version.save', participant: actor, requirementId: saveConflict.requirementId, baseCommit: saveConflict.currentCommit, markdown: mergeDraft, summary })).then(ok => { if (ok) { setDraft(mergeDraft); setSummary(''); setSaveConflict(undefined); setNotice('冲突已合并并创建新的 Git commit') } })}/>}
+    {pageCommentOpen && selected && <PageCommentDialog value={pageCommentText} setValue={setPageCommentText} close={() => setPageCommentOpen(false)} submit={() => void addPageComment()} busy={busy}/>}
+    {notificationsOpen && <NotificationDialog notifications={notifications} close={() => setNotificationsOpen(false)} open={item => { setNotificationsOpen(false); location.hash = item.deepLink }} markRead={item => void act(actor => ({ kind: 'notification.mark-read', participant: actor, requirementId: item.requirementId, notificationIds: [item.id] }))}/>}
+    {myWorkOpen && <MyWorkDialog items={myItems} notifications={notifications} close={() => setMyWorkOpen(false)} openItem={item => { setMyWorkOpen(false); const tab = item.target.tab; const view = tab === 'discussion' ? 'discussion' : tab === 'decisions' ? 'records' : 'tasks'; location.hash = `#spec-collab/${encodeURIComponent(item.requirementId)}/${view}/${encodeURIComponent(item.target.objectId)}` }} openNotification={item => { setMyWorkOpen(false); location.hash = item.deepLink }}/>}
+    {pendingNavigation && selected && <AccessibleDialog title="处理未保存草稿" close={() => setPendingNavigation(undefined)} className={css.dialogSurface} dismissOnBackdrop={false}><div className={css.dialogForm}><div className={css.dialogHead}><div><span>本地草稿保护</span><h2>离开前如何处理当前草稿？</h2></div><button aria-label="继续编辑" onClick={() => setPendingNavigation(undefined)}>×</button></div><p>草稿已自动保存在此浏览器，尚未写入 Git。保留后可在下次打开此需求时继续；丢弃后无法恢复。</p><div className={css.stickyActions}><button onClick={() => setPendingNavigation(undefined)}>继续编辑</button><button onClick={() => void leaveWithDraft(true)} className={css.dangerText}>丢弃并离开</button><button className={css.execute} onClick={() => void leaveWithDraft(false)}>保留草稿并离开</button></div></div></AccessibleDialog>} {pendingWorkflow && selected && <AccessibleDialog title="确认流程操作" close={() => setPendingWorkflow(undefined)} className={css.dialogSurface}><div className={css.dialogForm}><div className={css.dialogHead}><div><span>流程确认</span><h2>{pendingWorkflow.kind === 'advance' ? `进入${selected.stage === 'product-review' ? '产品确认' : '产研确认'}？` : pendingWorkflow.kind === 'confirm' ? `确认当前版本 ${selected.currentCommit.slice(0, 8)}？` : '生成就绪需求？'}</h2></div><button aria-label="关闭" onClick={() => setPendingWorkflow(undefined)}>×</button></div><p>{pendingWorkflow.kind === 'advance' ? '阶段变化会通知协作者，当前版本和所有历史记录保持可追溯。' : pendingWorkflow.kind === 'confirm' ? '确认只绑定当前 commit；正文再次变化后需要重新确认。' : '将以产品和研发共同确认的当前 commit 生成可下载交付包。'}</p><div className={css.stickyActions}><button onClick={() => setPendingWorkflow(undefined)}>取消</button><button className={css.execute} onClick={() => void confirmWorkflow()}>确认执行</button></div></div></AccessibleDialog>}
   </div>
 }
 
-const stageSteps: Array<{ stage: RequirementStage; label: string }> = [
-  { stage: 'product-review', label: '澄清' },
-  { stage: 'product-confirmation', label: '产品确认' },
-  { stage: 'joint-review', label: '产研确认' },
-  { stage: 'ready', label: '已就绪' },
-]
-function StageRail({ stage }: { stage: RequirementStage }) {
-  const activeIndex = stageSteps.findIndex(item => item.stage === stage)
-  return <ol className={css.stageRail} aria-label="需求进度">{stageSteps.map((item, index) => <li className={index < activeIndex ? css.stageDone : index === activeIndex ? css.stageCurrent : ''} key={item.stage} aria-current={index === activeIndex ? 'step' : undefined}><span>{index < activeIndex ? '✓' : index + 1}</span><b>{item.label}</b></li>)}</ol>
-}
-function WorkflowFocus({ state, pendingForMe, onExecute }: { state: WorkflowState; pendingForMe: number; onExecute: () => void }) {
-  return <section className={css.workflowFocus}>
-    <div className={css.workflowEyebrow}><span>{state.eyebrow}</span>{pendingForMe > 0 && <small>{pendingForMe} 项与你相关</small>}</div>
-    <h2>{state.title}</h2>
-    <p>{state.detail}</p>
-    <button className={css.execute} disabled={state.disabled} title={state.disabledReason} onClick={onExecute}>{state.command.kind === 'none' && state.disabled ? <span className={css.runningDot}/> : null}{state.actionLabel}<span aria-hidden="true">→</span></button>
-    {state.disabledReason && <small className={css.disabledReason}>{state.disabledReason}</small>}
+const stageSteps = stages.map(stage => ({ stage, label: stageLabels[stage] }))
+
+function WorkflowFocus({ state, onExecute }: { state: WorkflowState; onExecute: () => void }) {
+  const running = state.command.kind === 'none' && state.disabled && state.disabledReason === undefined
+  return <section className={css.workflowFocus} aria-label="下一步">
+    <div><h2>{state.title}</h2><p>{state.disabledReason ?? state.detail}</p></div>
+    {state.command.kind === 'none' ? <span className={css.workflowStatus} role="status">{running && <i className={css.runningDot}/>} {state.actionLabel}</span> :
+      <button className={css.primaryAction} disabled={state.disabled} onClick={onExecute}>{state.actionLabel}<span aria-hidden="true">→</span></button>}
   </section>
 }
 const taskTypeLabel: Record<MyActionItem['type'], string> = { reply: '需要回复', confirm: '需要确认', review: '需要审核', reconfirm: '需要重新确认' }
 function TaskQueue({ items, open, participants, act }: { items: MyActionItem[]; open: (item: MyActionItem) => void; participants: ParticipantSnapshot[]; act: Act }) {
   const sorted = items.slice().sort((left, right) => Number(right.blocking) - Number(left.blocking) || right.updatedAt - left.updatedAt)
   return <details className={css.taskQueue}><summary><span>与你相关的事项</span><b>{items.length}</b></summary><div>{sorted.map(item => <div className={css.taskRow} key={item.id}><button onClick={() => open(item)}><span>{item.blocking ? '优先' : '普通'}</span><div><strong>{item.objectTitle}</strong><small title={new Date(item.updatedAt).toLocaleString()}>{taskTypeLabel[item.type]} · {stageLabel(item.dueStage)}前 · {relativeTime(item.updatedAt)}</small></div><i aria-hidden="true">›</i></button><div className={css.taskAssignment}><label>指派<select aria-label="指派待办" value={item.assigneeParticipantId ?? `role:${item.assigneeRole}`} onChange={event => { const assignee = participants.find(person => person.participantId === event.target.value); const role = event.target.value === 'role:engineering' ? 'engineering' : assignee?.role ?? 'product'; void act(actor => ({ kind: 'action.assign', participant: actor, requirementId: item.requirementId, actionItemId: item.id, assigneeRole: role, ...(assignee ? { assigneeParticipantId: assignee.participantId } : {}), dueStage: item.dueStage })) }}><option value="role:product">产品角色</option><option value="role:engineering">研发角色</option>{participants.map(person => <option key={person.participantId} value={person.participantId}>{person.nickname}</option>)}</select></label><label>截止阶段<select aria-label="待办截止阶段" value={item.dueStage} onChange={event => void act(actor => ({ kind: 'action.assign', participant: actor, requirementId: item.requirementId, actionItemId: item.id, assigneeRole: item.assigneeRole, ...(item.assigneeParticipantId ? { assigneeParticipantId: item.assigneeParticipantId } : {}), dueStage: event.target.value as RequirementStage }))}>{stageSteps.map(stage => <option key={stage.stage} value={stage.stage}>{stage.label}</option>)}</select></label></div></div>)}</div></details>
-}
-
-type DocumentCollabStats = { openReviews: number; blockingReviews: number; openDiscussions: number; pendingPatches: number; activeDecisions: number; invalidatedDecisions: number; runningAi: number; dirty: boolean }
-function DocumentCollabBar({ activeMode, activeTaskView, activeRecordView, stats, onOpenReviews, onOpenDiscussion, onOpenPatches, onOpenDecisions }: { activeMode: PrimaryMode; activeTaskView: TaskView; activeRecordView: RecordView; stats: DocumentCollabStats; onOpenReviews: () => void; onOpenDiscussion: () => void; onOpenPatches: () => void; onOpenDecisions: () => void }) {
-  const reviewActive = activeMode === 'tasks' && activeTaskView === 'review'
-  const patchActive = activeMode === 'tasks' && activeTaskView === 'patches'
-  const discussionActive = activeMode === 'discussion'
-  const decisionsActive = activeMode === 'records' && activeRecordView === 'decisions'
-  return <section className={css.editorCollabBar} aria-label="正文协作状态">
-    <div className={css.collabBarState}>
-      <span className={stats.dirty ? css.collabStateDirty : css.collabStateSaved}>{stats.dirty ? '草稿未保存' : '当前正文'}</span>
-      {stats.runningAi > 0 && <span className={css.collabStateRunning}><i className={css.runningDot}/>AI 分析中 · {stats.runningAi}</span>}
-    </div>
-    <div className={css.collabBarActions}>
-      <button type="button" className={`${css.collabMetric} ${reviewActive ? css.collabMetricActive : ''} ${stats.blockingReviews > 0 ? css.collabMetricWarn : ''}`} aria-pressed={reviewActive} onClick={onOpenReviews}><b>{stats.openReviews}</b><span>待回答问题</span>{stats.blockingReviews > 0 && <small>{stats.blockingReviews} 阻塞</small>}</button>
-      <button type="button" className={`${css.collabMetric} ${discussionActive ? css.collabMetricActive : ''}`} aria-pressed={discussionActive} onClick={onOpenDiscussion}><b>{stats.openDiscussions}</b><span>打开讨论</span></button>
-      <button type="button" className={`${css.collabMetric} ${patchActive ? css.collabMetricActive : ''}`} aria-pressed={patchActive} onClick={onOpenPatches}><b>{stats.pendingPatches}</b><span>AI 建议</span></button>
-      <button type="button" className={`${css.collabMetric} ${decisionsActive ? css.collabMetricActive : ''} ${stats.invalidatedDecisions > 0 ? css.collabMetricWarn : ''}`} aria-pressed={decisionsActive} onClick={onOpenDecisions}><b>{stats.activeDecisions}</b><span>生效决策</span>{stats.invalidatedDecisions > 0 && <small>{stats.invalidatedDecisions} 作废</small>}</button>
-    </div>
-  </section>
 }
 
 export function InlineCommentComposer({ selection, text, setText, busy, cancel, submit }: { selection: EditorSelection; text: string; setText: (value: string) => void; busy: boolean; cancel: () => void; submit: () => Promise<void> }) {
@@ -756,7 +868,7 @@ function RichMarkdownEditor({ markdown, reviewItems, comments, documentFocus, fo
     const editor = instance.current
     if (!editor || editor.getMarkdown() === markdown) return
     syncing.current = true
-    editor.setMarkdown(markdown)
+    editor.setMarkdown(markdown, false)
     syncing.current = false
     syncAnnotationsRef.current()
   }, [markdown])
@@ -785,7 +897,7 @@ function RichMarkdownEditor({ markdown, reviewItems, comments, documentFocus, fo
     if (documentFocus.kind === 'review') window.requestAnimationFrame(() => window.requestAnimationFrame(updateLocatedReview))
     else window.setTimeout(updateLocatedReview, 220)
   }, [reviewItems, comments, documentFocus, focusRequest])
-  return <div className={css.richEditorShell} ref={shell}><div className={css.richEditor} ref={host}/><div className={css.reviewAnchorLayer} aria-label="正文协作锚点">{markers.map(marker => <span key={`highlight-${marker.kind}-${marker.objectId}`} className={`${css.documentAnchorHighlight} ${marker.kind === 'comment' ? css.documentCommentHighlight : css.documentReviewHighlight} ${marker.blocking ? css.documentReviewHighlightBlocking : ''} ${marker.selected ? css.documentAnchorHighlightSelected : ''}`} style={{ top: marker.highlightTop, left: marker.highlightLeft, width: marker.highlightWidth, height: marker.highlightHeight }} aria-hidden="true"/>)}
+  return <div className={css.richEditorShell} ref={shell}><div className={css.richEditor} ref={host}/><div className={css.reviewAnchorLayer} role="group" aria-label="正文协作锚点">{markers.map(marker => <span key={`highlight-${marker.kind}-${marker.objectId}`} className={`${css.documentAnchorHighlight} ${marker.kind === 'comment' ? css.documentCommentHighlight : css.documentReviewHighlight} ${marker.blocking ? css.documentReviewHighlightBlocking : ''} ${marker.selected ? css.documentAnchorHighlightSelected : ''}`} style={{ top: marker.highlightTop, left: marker.highlightLeft, width: marker.highlightWidth, height: marker.highlightHeight }} aria-hidden="true"/>)}
     {markers.map(marker => <button key={`${marker.kind}-${marker.objectId}`} type="button" className={`${marker.kind === 'comment' ? css.documentCommentAnchor : css.documentReviewAnchor} ${marker.blocking ? css.documentReviewAnchorBlocking : ''} ${marker.selected ? css.documentAnchorSelected : ''}`} style={{ top: marker.top, left: marker.left }} title={marker.title} aria-label={marker.kind === 'comment' ? `打开评论：${marker.title}` : `打开问题：${marker.title}`} data-review-object-id={marker.kind === 'review' ? marker.objectId : undefined} data-comment-object-id={marker.kind === 'comment' ? marker.objectId : undefined} onMouseDown={event => event.preventDefault()} onClick={event => marker.kind === 'comment' ? onOpenCommentRef.current(marker.objectId) : onOpenReviewRef.current(marker.objectId, inlinePopoverPositionFromRect(event.currentTarget.getBoundingClientRect(), inlineReviewPopoverSize))}><DocumentMarkerIcon kind={marker.kind} blocking={marker.blocking}/></button>)}</div></div>
 }
 
@@ -807,6 +919,8 @@ export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest,
   const answeredCount = active.filter(item => item.status === 'answered').length
   const processedCount = current.filter(item => item.status !== 'open').length
   const currentRuns = requirement.aiRuns.filter(run => run.commit === requirement.currentCommit)
+  const reviewRunning = currentRuns.some(run => run.status === 'queued' || run.status === 'running')
+  const emptyReviewLabel = reviewRunning ? 'AI 正在检查' : currentRuns.some(run => run.status === 'completed') ? '当前版本没有问题' : '尚未完成检查'
   const currentStageSessionId = requirement.aiConversations?.find(item => item.stage === requirement.stage && item.stageCycle === requirement.stageCycle)?.sessionId
   const openItem = (itemId: string): void => {
     setSelectedItemId(itemId)
@@ -822,7 +936,7 @@ export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest,
   return <>
     <div className={css.panelSummary}><div><strong>问题检查清单</strong><span>{unansweredCount > 0 ? `${unansweredCount} 项待回答 · ${active.filter(item => item.severity === 'blocking' && item.status === 'open').length} 项阻塞下一阶段` : answeredCount > 0 ? '回答已齐，下一步让 AI 回读' : active.length > 0 ? `${active.length} 项等待后续处理` : '当前版本已全部处理'}</span></div>{current.length > 0 && <div className={css.checklistMeter}><small>{processedCount}/{current.length}</small><progress aria-label={`已回答或处理 ${processedCount} 项，共 ${current.length} 项`} value={processedCount} max={current.length}/></div>}</div>
     {currentRuns.length > 0 && <details className={css.runHistory}><summary>AI 运行中心（{currentRuns.length}）{currentStageSessionId ? ' · 当前阶段复用 1 个会话' : ''}</summary>{currentRuns.slice().reverse().map(run => { const endedAt = ['completed', 'failed'].includes(run.status) ? run.updatedAt : Date.now(); const sharedSession = Boolean(run.sessionId && run.sessionId === currentStageSessionId); const step = run.status === 'queued' ? '等待可用执行槽' : run.status === 'running' ? sharedSession ? '复用当前阶段上下文并分析增量' : '读取工作区并核对当前正文' : run.status === 'completed' ? '检查结果已写入问题清单' : '运行中断，输入和历史结果已保留'; return <div className={css.run} key={run.id}><div><strong>{reviewKindLabel[run.kind]}</strong><span>{statusLabel[run.status] ?? run.status}</span></div><dl><div><dt>当前步骤</dt><dd>{step}</dd></div><div><dt>开始</dt><dd title={new Date(run.createdAt).toLocaleString()}>{relativeTime(run.createdAt)}</dd></div><div><dt>耗时</dt><dd>{durationText(endedAt - run.createdAt)}</dd></div></dl>{run.maturitySummary && <MarkdownBody text={run.maturitySummary}/>} {run.error && <><p className={css.chatError}>{friendlyActionError(run.error)}</p><button className={css.panelAction} onClick={() => void act(actor => ({ kind: 'review.request', participant: actor, requirementId: requirement.id, reviewKind: run.kind }))}>重试本次检查</button></>}{run.sessionId && <AiConversation api={api} requirementId={requirement.id} sessionId={run.sessionId}/>}</div>})}</details>}
-    {current.length === 0 && <div className={css.emptyPanel}><strong>等待 AI 完成检查</strong><p>检查结果会按优先级出现在这里。</p></div>}
+    {current.length === 0 && <div className={css.emptyPanel}><strong>{emptyReviewLabel}</strong></div>}
     {active.length > 0 && <ReviewChecklist items={active} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/>}
     {deferred.length > 0 && <details className={css.historyGroup}><summary>保留待核对 · {deferred.length}</summary><ReviewChecklist items={deferred} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/></details>}
     {historical.length > 0 && <details className={css.historyGroup}><summary>历史问题 · {historical.length}</summary><ReviewChecklist items={historical.slice().reverse()} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/></details>}
@@ -1043,18 +1157,46 @@ function PatchPanel({ requirement, act, api }: { requirement: RequirementView; a
 }
 function DecisionPanel({ requirement, act }: { requirement: RequirementView; act: Act }) {
   const [open, setOpen] = useState(false)
-  const formRef = useRef<HTMLDivElement>(null)
-  const [form, setForm] = useState({ question: '', decision: '', rationale: '', sections: '', acceptanceIds: '' })
-  const affectedSections = form.sections.split(',').map(value => value.trim()).filter(Boolean)
-  const affectedAcceptanceIds = form.acceptanceIds.split(',').map(value => value.trim()).filter(Boolean)
-  useEffect(() => {
-    if (!open) return
-    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
-    const frame = window.requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: 'start', behavior }))
-    return () => window.cancelAnimationFrame(frame)
-  }, [open])
-  const submit = async (): Promise<void> => { if (await act(actor => ({ kind: 'decision.create', participant: actor, requirementId: requirement.id, question: form.question, options: [], decision: form.decision, rationale: form.rationale, affectedSections, affectedAcceptanceIds }))) { setOpen(false); setForm({ question: '', decision: '', rationale: '', sections: '', acceptanceIds: '' }) } }
-  return <>{requirement.decisions.length === 0 && !open && <div className={css.emptyPanel}><strong>还没有需要长期保留的决策</strong><p>当评论形成明确取舍、例外或边界时，把它记录为决策，避免版本变化后丢失上下文。</p><button className={css.execute} onClick={() => setOpen(true)}>记录第一个决策</button></div>}{requirement.decisions.map(item => <section id={`spec-object-${item.id}`} key={item.id}><MarkdownBody text={item.question} className={css.reviewTitle}/><MarkdownBody text={item.decision}/><small title={new Date(item.createdAt).toLocaleString()}>{item.rationale} · {item.confirmer.nickname} · {relativeTime(item.createdAt)} · {item.status === 'active' ? '生效中' : '已作废'}</small><button className={css.recordLinkButton} onClick={() => void navigator.clipboard.writeText(`${location.origin}${location.pathname}#spec-collab/${requirement.id}/records/${item.id}?commit=${item.commit}`)}>复制链接</button></section>)}{open ? <div ref={formRef} className={css.decisionForm}><label>待决策问题（必填）<textarea rows={2} required autoFocus value={form.question} onChange={event => setForm({ ...form, question: event.target.value })}/></label><label>确认结论（必填）<textarea rows={3} required value={form.decision} onChange={event => setForm({ ...form, decision: event.target.value })}/></label><label>决策理由（选填）<textarea rows={2} value={form.rationale} onChange={event => setForm({ ...form, rationale: event.target.value })}/></label><label>受影响章节（与 AC 至少填写一项）<input list="decision-sections" value={form.sections} onChange={event => setForm({ ...form, sections: event.target.value })} placeholder="业务术语与规则"/><datalist id="decision-sections">{[...requirement.version.markdown.matchAll(/^##\s+(.+)$/gm)].map(match => <option key={match[1]} value={match[1]}/>)}</datalist></label><label>受影响 AC IDs（与章节至少填写一项）<input value={form.acceptanceIds} onChange={event => setForm({ ...form, acceptanceIds: event.target.value })} placeholder="AC-RETRY-001"/></label><div className={css.stickyActions}><button onClick={() => setOpen(false)}>取消</button><button className={css.execute} disabled={!form.question.trim() || !form.decision.trim() || (affectedSections.length === 0 && affectedAcceptanceIds.length === 0)} onClick={() => void submit()}>保存决策</button></div></div> : requirement.decisions.length > 0 && <button className={css.panelAction} onClick={() => setOpen(true)}>记录新决策</button>}</>
+  const empty = { question: '', decision: '', rationale: '', sections: '', acceptanceIds: '' }
+  const [form, setForm] = useState(empty)
+  const [saving, setSaving] = useState(false)
+  const affectedSections = form.sections.split(/[,，]/).map(value => value.trim()).filter(Boolean)
+  const affectedAcceptanceIds = form.acceptanceIds.split(/[,，]/).map(value => value.trim()).filter(Boolean)
+  const canSave = Boolean(form.question.trim() && form.decision.trim() && (affectedSections.length || affectedAcceptanceIds.length))
+  const submit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!canSave || saving) return
+    setSaving(true)
+    try {
+      if (await act(actor => ({ kind: 'decision.create', participant: actor, requirementId: requirement.id, question: form.question, options: [], decision: form.decision, rationale: form.rationale, affectedSections, affectedAcceptanceIds }))) {
+        setOpen(false)
+        setForm(empty)
+      }
+    } finally { setSaving(false) }
+  }
+  return <>
+    {requirement.decisions.length === 0 && <div className={css.emptyPanel}><strong>还没有关键决策</strong><p>记录团队达成的结论及其影响范围。</p></div>}
+    {requirement.decisions.map(item => <section id={`spec-object-${item.id}`} key={item.id}>
+      <MarkdownBody text={item.question} className={css.reviewTitle}/>
+      <MarkdownBody text={item.decision}/>
+      <small title={new Date(item.createdAt).toLocaleString()}>{item.rationale} · {item.confirmer.nickname} · {relativeTime(item.createdAt)} · {item.status === 'active' ? '生效中' : '已作废'}</small>
+      <button className={css.recordLinkButton} onClick={() => void navigator.clipboard.writeText(`${location.origin}${location.pathname}#spec-collab/${encodeURIComponent(requirement.id)}/records/${item.id}?commit=${item.commit}`)}>复制链接</button>
+    </section>)}
+    <button className={css.panelAction} onClick={() => setOpen(true)}>记录新决策</button>
+    {open && <DialogForm title="记录新决策" close={() => setOpen(false)} submit={event => void submit(event)}>
+      <div className={css.dialogHead}><h2>记录新决策</h2><button type="button" aria-label="关闭" onClick={() => setOpen(false)}>×</button></div>
+      <div className={css.decisionForm} data-dialog-scroll-region>
+        <label>待决策问题（必填）<textarea rows={2} required autoFocus value={form.question} onChange={event => setForm({ ...form, question: event.target.value })}/></label>
+        <label>确认结论（必填）<textarea rows={2} required value={form.decision} onChange={event => setForm({ ...form, decision: event.target.value })}/></label>
+        <label>决策理由（选填）<textarea rows={2} value={form.rationale} onChange={event => setForm({ ...form, rationale: event.target.value })}/></label>
+        <p>填写受影响的章节或验收项，多个值用逗号分隔。</p>
+        <label>受影响章节<input list="decision-sections" value={form.sections} onChange={event => setForm({ ...form, sections: event.target.value })} placeholder="业务术语与规则"/></label>
+        <datalist id="decision-sections">{[...requirement.version.markdown.matchAll(/^##\s+(.+)$/gm)].map(match => <option key={match[1]} value={match[1]}/>)}</datalist>
+        <label>受影响的 AC<input value={form.acceptanceIds} onChange={event => setForm({ ...form, acceptanceIds: event.target.value })} placeholder="AC-1"/></label>
+      </div>
+      <div className={css.stickyActions}><button type="button" onClick={() => setOpen(false)}>取消</button><button className={css.execute} disabled={!canSave || saving}>{saving ? '正在保存…' : '保存决策'}</button></div>
+    </DialogForm>}
+  </>
 }
 function VersionPanel({ requirement, api, act }: { requirement: RequirementView; api: SpecApi; act: Act }) {
   const previous = requirement.history.find(version => version.commit !== requirement.currentCommit)?.commit ?? requirement.currentCommit

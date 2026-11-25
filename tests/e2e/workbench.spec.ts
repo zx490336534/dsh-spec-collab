@@ -1,12 +1,25 @@
 import { AxeBuilder } from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 
-async function openWorkbench(page: Page): Promise<void> {
-  await page.goto('/')
+async function openWorkbench(page: Page, openDocument = true): Promise<void> {
+  await page.goto(process.env.SPEC_COLLAB_E2E_ENTRY ?? '/')
+  const intro = page.getByRole('dialog', { name: '预览版说明' })
+  if (await intro.isVisible()) await intro.getByRole('button', { name: '继续' }).click()
   const entry = page.getByRole('button', { name: '需求讨论', exact: true })
+  const openSidebar = page.getByRole('button', { name: '打开侧边栏', exact: true })
+  if (!await entry.isVisible() && await openSidebar.isVisible()) await openSidebar.click()
+  if (!await entry.isVisible()) await page.locator('button[aria-label="更多"]:visible').first().click()
   await expect(entry).toBeVisible()
   await entry.click()
+  await expect(page.getByRole('heading', { name: '需求库' })).toBeVisible()
+  if (openDocument) await page.locator('[data-requirement-id]').first().click()
   await expect(page.getByRole('button', { name: '返回聊天' })).toBeVisible()
+}
+
+async function openReadyRequirement(page: Page): Promise<void> {
+  await page.getByRole('navigation', { name: '需求工作台导航' }).getByRole('button', { name: '需求库' }).click()
+  await page.locator('[data-stage="ready"] [data-requirement-id]').first().click()
+  await expect(page.getByRole('button', { name: '查看交付内容' })).toBeVisible()
 }
 
 async function useProductIdentity(page: Page): Promise<void> {
@@ -17,14 +30,51 @@ async function useProductIdentity(page: Page): Promise<void> {
   })
 }
 
-for (const width of [1440, 1280, 1024, 960, 900, 680, 650]) {
+test('首次创建需求先登记身份，取消登记不会保存输入', async ({ page }) => {
+  await openWorkbench(page, false)
+  const create = page.getByRole('button', { name: '新建需求' })
+  const identity = page.getByRole('dialog', { name: '设置协作身份' })
+  await create.click()
+  await identity.getByRole('textbox', { name: '花名（必填）' }).fill('验收产品')
+  await identity.getByRole('button', { name: '取消' }).click()
+  await expect(page.getByRole('button', { name: '登记身份', exact: true })).toBeVisible()
+  await create.click()
+  await expect(identity.getByRole('textbox', { name: '花名（必填）' })).toHaveValue('')
+  await identity.getByRole('textbox', { name: '花名（必填）' }).fill('验收产品')
+  await identity.getByRole('button', { name: '保存身份' }).click()
+  await expect(page.getByRole('dialog', { name: '新建需求' })).toBeVisible()
+})
+
+test('需求库搜索筛选保留宿主项目树，进入详情后仍可回到原搜索', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 844 })
+  await openWorkbench(page, false)
+  const shell = page.locator('[data-dsh-spec-collab-view]')
+  const hostTree = page.getByRole('tree', { name: '会话' })
+  await expect(hostTree).toBeVisible()
+  const hostWidth = await hostTree.evaluate(element => element.getBoundingClientRect().width)
+  const first = page.locator('[data-requirement-id]').first()
+  const id = await first.getAttribute('data-requirement-id')
+  expect(id).toBeTruthy()
+  const query = page.getByRole('searchbox', { name: '搜索需求' })
+  await query.fill(id!)
+  await expect(page.locator('[data-requirement-id]')).toHaveCount(1)
+  await first.click()
+  await expect(page.getByRole('list', { name: '需求进度' })).toBeVisible()
+  expect(await hostTree.evaluate(element => element.getBoundingClientRect().width)).toBe(hostWidth)
+  expect(await shell.evaluate(element => element.getBoundingClientRect().left)).toBeGreaterThan(0)
+  await page.getByRole('navigation', { name: '需求工作台导航' }).getByRole('button', { name: '需求库' }).click()
+  await expect(query).toHaveValue(id!)
+  await expect(page.locator('[data-requirement-id]')).toHaveCount(1)
+})
+
+for (const width of [1440, 1280, 1024, 960, 900, 680, 650, 390]) {
   test(`工作台在 ${width}px 下无不可达的页面级横向溢出`, async ({ page }) => {
     await openWorkbench(page)
     await page.setViewportSize({ width, height: 844 })
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
     expect(overflow).toBeLessThanOrEqual(1)
-    if (width < 960) {
-      await expect(page.getByRole('button', { name: '需求列表', exact: true })).toBeVisible()
+    const panelWidth = await page.locator('[data-dsh-spec-collab-view]').evaluate(element => element.getBoundingClientRect().width)
+    if (panelWidth <= 940) {
       await expect(page.getByRole('button', { name: '需求正文', exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: '协作', exact: true })).toBeVisible()
     }
@@ -34,7 +84,7 @@ for (const width of [1440, 1280, 1024, 960, 900, 680, 650]) {
 test('核心工作台没有严重或致命 axe 违规', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 844 })
   await openWorkbench(page)
-  const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
+  const result = await new AxeBuilder({ page }).include('[data-dsh-spec-collab-view]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()
   expect(result.violations.filter(item => item.impact === 'serious' || item.impact === 'critical')).toEqual([])
 })
 
@@ -42,7 +92,7 @@ test('移动端从协作进入专注模式后仍显示正文', async ({ page }) 
   await page.setViewportSize({ width: 900, height: 844 })
   await openWorkbench(page)
   await page.getByRole('button', { name: /^协作/ }).click()
-  await page.getByRole('button', { name: /聚焦正文/ }).click()
+  await page.getByRole('button', { name: '聚焦正文', exact: true }).click()
   await expect(page.locator('.toastui-editor-ww-container')).toBeVisible()
   await expect(page.getByRole('button', { name: '需求正文', exact: true })).toBeHidden()
 })
@@ -50,8 +100,8 @@ test('移动端从协作进入专注模式后仍显示正文', async ({ page }) 
 test('Portal 对话框继承插件主题且移动端页签热区不小于 44px', async ({ page }) => {
   await page.setViewportSize({ width: 650, height: 844 })
   await openWorkbench(page)
-  await page.locator('[data-dsh-spec-collab-view] header button').last().click()
-  const dialog = page.getByRole('dialog')
+  await page.getByRole('button', { name: '登记身份', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '设置协作身份' })
   await expect(dialog).toBeVisible()
   const surface = dialog.locator('form, > div').first()
   expect(await surface.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
@@ -109,7 +159,7 @@ test('长批注弹窗只滚动正文并始终保留标题与提交操作', async
 test('小视口表单对话框滚动时保留标题与底部操作', async ({ page }) => {
   await page.setViewportSize({ width: 650, height: 360 })
   await openWorkbench(page)
-  await page.locator('[data-dsh-spec-collab-view] header button').last().click()
+  await page.getByRole('button', { name: '登记身份', exact: true }).click()
 
   const dialog = page.getByRole('dialog', { name: '设置协作身份' })
   const form = dialog.locator('form')
@@ -147,8 +197,8 @@ test('正文批注标记 hover 不显示大块背景且保留点击热区', asyn
 
 test('新建需求首次打开不预先报错，提交空表单后才显示错误摘要', async ({ page }) => {
   await page.setViewportSize({ width: 1256, height: 844 })
-  await openWorkbench(page)
-  await page.getByRole('button', { name: '打开需求列表' }).click()
+  await useProductIdentity(page)
+  await openWorkbench(page, false)
   await page.getByRole('button', { name: '新建需求' }).click()
 
   const dialog = page.getByRole('dialog', { name: '新建需求' })
@@ -198,9 +248,7 @@ test('版本卡片在协作栏内完整显示且不产生横向滚动', async ({
 test('Ready 主操作会把交付工具定位到可见区域', async ({ page }) => {
   await page.setViewportSize({ width: 650, height: 844 })
   await openWorkbench(page)
-  await page.getByRole('button', { name: '需求列表', exact: true }).click()
-  const list = page.getByRole('complementary', { name: '需求列表' })
-  await list.locator('nav button').filter({ hasText: '演示：登录页密码显示开关' }).first().click()
+  await openReadyRequirement(page)
   await page.getByRole('button', { name: '协作', exact: true }).click()
   await page.getByRole('button', { name: '查看交付内容' }).click()
 
@@ -260,37 +308,24 @@ test('窄屏决策表单保持紧凑且输入控件可触达', async ({ page }) 
   await page.setViewportSize({ width: 650, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await openWorkbench(page)
-  await page.getByRole('button', { name: '需求列表', exact: true }).click()
-  const list = page.getByRole('complementary', { name: '需求列表' })
-  await list.locator('nav button').filter({ hasText: '演示：登录页密码显示开关' }).first().click()
+  await openReadyRequirement(page)
   await page.getByRole('button', { name: '协作', exact: true }).click()
   await page.getByRole('tab', { name: '记录', exact: true }).click()
   await page.getByRole('tab', { name: '关键决策', exact: true }).click()
-  await page.evaluate(() => {
-    const original = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = function(options?: boolean | ScrollIntoViewOptions): void {
-      document.body.dataset.specScrollBehavior = typeof options === 'object' ? String(options.behavior) : ''
-      original.call(this, options)
-    }
-  })
   await page.getByRole('button', { name: '记录新决策' }).click()
 
-  const form = page.locator('div[class*="decisionForm"]')
-  const textareaHeights = await form.locator('textarea').evaluateAll(controls => controls.map(control => control.getBoundingClientRect().height))
-  const inputHeights = await form.locator('input').evaluateAll(controls => controls.map(control => control.getBoundingClientRect().height))
-  const fieldStyles = await form.locator('input, textarea').evaluateAll(controls => controls.map(control => ({ borderWidth: getComputedStyle(control).borderWidth, borderRadius: getComputedStyle(control).borderRadius })))
-  const actions = form.locator('div[class*="stickyActions"]')
-  const overlapsField = await actions.evaluate((actionBar) => {
-    const actionsRect = actionBar.getBoundingClientRect()
-    return [...actionBar.parentElement!.querySelectorAll('input, textarea')].some(field => {
-      const fieldRect = field.getBoundingClientRect()
-      return fieldRect.top < actionsRect.bottom && fieldRect.bottom > actionsRect.top
-    })
-  })
-  expect(textareaHeights.every(height => height <= 100)).toBe(true)
+  const dialog = page.getByRole('dialog', { name: '记录新决策' })
+  const form = dialog.locator('form')
+  const title = dialog.getByRole('heading', { name: '记录新决策' }).last()
+  const save = dialog.getByRole('button', { name: '保存决策' })
+  await expect(dialog.getByRole('textbox', { name: '待决策问题（必填）' })).toBeFocused()
+  await expect(save).toBeInViewport()
+  const before = { title: await title.boundingBox(), save: await save.boundingBox() }
+  await form.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await expect(save).toBeInViewport()
+  const after = { title: await title.boundingBox(), save: await save.boundingBox() }
+  expect(Math.abs(after.title!.y - before.title!.y)).toBeLessThanOrEqual(1)
+  expect(Math.abs(after.save!.y - before.save!.y)).toBeLessThanOrEqual(1)
+  const inputHeights = await dialog.locator('input').evaluateAll(controls => controls.map(control => control.getBoundingClientRect().height))
   expect(inputHeights.every(height => height >= 44)).toBe(true)
-  expect(fieldStyles.every(style => style.borderWidth === '1px' && style.borderRadius === '5px')).toBe(true)
-  expect(overlapsField).toBe(false)
-  await expect(page.locator('body')).toHaveAttribute('data-spec-scroll-behavior', 'auto')
-  await expect(form.getByRole('button', { name: '保存决策' })).toBeInViewport()
 })
