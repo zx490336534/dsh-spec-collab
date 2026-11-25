@@ -45,7 +45,7 @@
     "src",
     "docs/*.md",
     "docs/*.csv",
-    "docs/assets",
+    "docs/assets/workbench-*.png",
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md"
