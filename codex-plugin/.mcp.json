@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "spec-collab": {
+      "command": "node",
+      "args": ["./runtime/workbench.mjs"],
+      "cwd": ".",
+      "env_vars": ["CODEX_HOME", "SPEC_COLLAB_DATA_DIR", "SPEC_COLLAB_CODEX"]
+    }
+  }
+}

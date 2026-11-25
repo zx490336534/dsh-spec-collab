@@ -7,6 +7,10 @@
 
 这是一个 DeepSeek Harness 插件。AI 结合项目上下文找出需求缺口，人回答问题、审阅修改，产品和研发对同一版正文确认后导出 Markdown。每次正式修改都有 Git 版本，团队可以追溯当时确认了什么。
 
+## Codex 版本
+
+[Spec Collab for Codex](codex-plugin/README.md) 可直接从本仓库的 Marketplace 安装。它复用同一套 Git 版本、审核流程和 Ready 准入规则，在本地浏览器工作台完成产研共审。
+
 ## 从想法到交付
 
 ### 1. 录入需求，选定项目

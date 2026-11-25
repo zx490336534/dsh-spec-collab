@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "tests", "tsdown.config.ts"]
+  "include": ["src", "tests", "tsdown.config.ts", "codex-plugin/src", "codex-plugin/build.config.ts", "codex-plugin/tests"]
 }

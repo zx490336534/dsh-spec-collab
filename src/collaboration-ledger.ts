@@ -100,7 +100,7 @@ function validateV3Ledger(value: unknown): asserts value is CollaborationState {
   }
 }
 
-function atomicWrite(path: string, value: unknown): void {
+export function atomicWrite(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   const tmp = `${path}.tmp`
   writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 })

@@ -18,6 +18,7 @@ type EventDraft = Omit<CollaborationEvent, 'revision'>
 type AiTask = { kind: 'review' | 'comment'; id: string }
 type ActionChange = { requirementId: string; spec?: PreparedSpecCommit; task?: AiTask; deleted?: RequirementView; unchanged?: true }
 type VersionAction = Extract<CollaborationAction, { kind: 'requirement.rename' | 'version.save' | 'version.restore' | 'patch.accept' }>
+type PatchProposal = Pick<CandidatePatch, 'proposedMarkdown' | 'summary' | 'affectedReviewItemIds' | 'affectedSections' | 'affectedAcceptanceIds'>
 
 export class CollaborationEngine {
   private state: CollaborationState
@@ -30,23 +31,23 @@ export class CollaborationEngine {
     this.ledger = new CollaborationLedger(eventPath, change => versions.publish(change), options.legacyPath)
     this.state = this.ledger.load()
   }
-  setCoordinator(coordinator: AiCoordinator): void {
+  setCoordinator(coordinator: AiCoordinator, { recoverRunning = false } = {}): void {
     if (this.coordinator === undefined) {
-      // A queued task loaded from disk has no durable acknowledgement from DSH.
-      // Allow an explicit retry without dispatching a possibly admitted prompt twice.
+      // Queued tasks have no durable launch acknowledgement. Local workers also
+      // recover running tasks when their process cannot survive a host restart.
       this.changeAi(() => {
         let interrupted = false
         const now = Date.now()
         for (const record of this.state.requirements) {
           for (const run of record.aiRuns) {
-            if (run.status !== 'queued') continue
+            if (run.status !== 'queued' && !(recoverRunning && run.status === 'running')) continue
+            run.error = run.status === 'running' ? '审核服务已重启，请重试当前版本的检查' : 'AI launch was interrupted before acknowledgement'
             run.status = 'failed'
-            run.error = 'AI launch was interrupted before acknowledgement'
             run.updatedAt = now
             interrupted = true
           }
           for (const comment of record.comments) {
-            if (comment.aiStatus !== 'queued') continue
+            if (comment.aiStatus !== 'queued' && !(recoverRunning && comment.aiStatus === 'running')) continue
             comment.aiStatus = 'failed'
             comment.updatedAt = now
             interrupted = true
@@ -152,7 +153,7 @@ export class CollaborationEngine {
     return structuredClone(result)
   }
 
-  submitReview(input: { requirementId: string; commit: string; runId: string; ai: ParticipantSnapshot; items: Omit<ReviewItem, 'id' | 'requirementId' | 'commit' | 'reviewKind' | 'createdAt' | 'updatedAt'>[]; maturitySummary: string }): void {
+  submitReview(input: { requirementId: string; commit: string; runId: string; ai: ParticipantSnapshot; items: Omit<ReviewItem, 'id' | 'requirementId' | 'commit' | 'reviewKind' | 'createdAt' | 'updatedAt'>[]; maturitySummary: string; patch?: PatchProposal }): void {
     this.changeAi(() => {
       const record = this.record(input.requirementId)
       const run = record.aiRuns.find(item => item.id === input.runId)
@@ -168,6 +169,7 @@ export class CollaborationEngine {
         record.reviewItems.push(created)
         record.actionItems.push(actionForReview(created))
       }
+      if (input.patch) this.appendPatch(record, input.commit, run.kind, input.ai, input.patch, now)
       run.status = 'completed'
       run.maturitySummary = input.maturitySummary
       run.updatedAt = now
@@ -176,17 +178,22 @@ export class CollaborationEngine {
     })
   }
 
-  submitPatch(input: { requirementId: string; baseCommit: string; reviewKind: ReviewKind; ai: ParticipantSnapshot; proposedMarkdown: string; summary: string; affectedReviewItemIds: string[]; affectedSections: string[]; affectedAcceptanceIds: string[] }): void {
+  submitPatch(input: PatchProposal & { requirementId: string; baseCommit: string; reviewKind: ReviewKind; ai: ParticipantSnapshot }): void {
     this.changeAi(() => {
       const record = this.record(input.requirementId)
       if (record.currentCommit !== input.baseCommit) throw new Error('patch base commit is stale')
-      assertChineseFeedback(input.summary, input.proposedMarkdown)
-      const now = Date.now()
-      const patch: CandidatePatch = { id: randomUUID(), requirementId: record.id, baseCommit: input.baseCommit, reviewKind: input.reviewKind, proposedMarkdown: input.proposedMarkdown, summary: input.summary, affectedReviewItemIds: input.affectedReviewItemIds, affectedSections: input.affectedSections, affectedAcceptanceIds: input.affectedAcceptanceIds, createdBy: input.ai, status: 'pending', createdAt: now }
-      record.patches.push(patch)
-      record.actionItems.push({ id: randomUUID(), requirementId: record.id, sourceType: 'patch', sourceId: patch.id, type: 'confirm', assigneeRole: input.reviewKind === 'engineering-precheck' ? 'engineering' : 'product', blocking: true, status: 'pending', dueStage: record.stage, createdAt: now, updatedAt: now })
+      const patch = this.appendPatch(record, input.baseCommit, input.reviewKind, input.ai, input, Date.now())
       return aiEvent(record.id, patch.id)
     })
+  }
+
+  private appendPatch(record: RequirementRecord, baseCommit: string, reviewKind: ReviewKind, ai: ParticipantSnapshot, proposal: PatchProposal, now: number): CandidatePatch {
+    assertChineseFeedback(proposal.summary, proposal.proposedMarkdown)
+    const { proposedMarkdown, summary, affectedReviewItemIds, affectedSections, affectedAcceptanceIds } = proposal
+    const patch: CandidatePatch = { id: randomUUID(), requirementId: record.id, baseCommit, reviewKind, proposedMarkdown, summary, affectedReviewItemIds, affectedSections, affectedAcceptanceIds, createdBy: ai, status: 'pending', createdAt: now }
+    record.patches.push(patch)
+    record.actionItems.push({ id: randomUUID(), requirementId: record.id, sourceType: 'patch', sourceId: patch.id, type: 'confirm', assigneeRole: reviewKind === 'engineering-precheck' ? 'engineering' : 'product', blocking: true, status: 'pending', dueStage: record.stage, createdAt: now, updatedAt: now })
+    return patch
   }
 
   submitAiReply(input: { requirementId: string; commentId: string; ai: ParticipantSnapshot; body: string }): void {

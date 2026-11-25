@@ -118,7 +118,7 @@ export function mentionedParticipantIds(body: string, participants: ParticipantS
     return false
   }).map(item => item.participantId)
 }
-export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => void }) {
+export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose?: () => void }) {
   const workbenchRef = useRef<HTMLDivElement>(null)
   const workspaceHeading = useRef<HTMLHeadingElement>(null)
   const [requirements, setRequirements] = useState<RequirementSummary[]>([])
@@ -418,7 +418,7 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
     if (navigation.kind === 'deep-link') { approvedDeepLinkHash.current = navigation.hash; window.dispatchEvent(new HashChangeEvent('hashchange')); return }
     if (navigation.kind === 'archive') { void archiveRequirementById(navigation.requirementId, navigation.archived); return }
     if (location.hash.startsWith('#spec-collab/')) { history.replaceState(history.state, '', `${location.pathname}${location.search}`); resolvedDeepLinkHash.current = '' }
-    onClose()
+    onClose?.()
   }
   const requestNavigation = (navigation: PendingNavigation): void => {
     const staysOnRequirement = navigation.kind === 'select' && navigation.requirementId === selectedIdRef.current
@@ -627,7 +627,7 @@ export function SpecWorkbench({ api, onClose }: { api: SpecApi; onClose: () => v
         {registered && <button className={css.myWorkButton} onClick={() => setMyWorkOpen(true)}>我的工作{myItems.length > 0 && <b>{myItems.length}</b>}</button>}
         {registered && <button className={css.notificationButton} aria-label={`通知，${unreadCount} 条未读`} onClick={() => setNotificationsOpen(true)}>通知{unreadCount > 0 && <b>{unreadCount}</b>}</button>}
         <button className={css.identity} onClick={openIdentity}>{registered ? `${participant.nickname} · ${participant.role === 'product' ? '产品' : '研发'}` : '登记身份'}</button>
-        <button className={css.quietButton} aria-label="返回聊天" title="返回聊天" onClick={closeWorkbench}><span aria-hidden="true">↗</span><span className={css.backLabel}>返回聊天</span></button>
+        {onClose && <button className={css.quietButton} aria-label="返回聊天" title="返回聊天" onClick={closeWorkbench}><span aria-hidden="true">↗</span><span className={css.backLabel}>返回聊天</span></button>}
       </div>
     </header>
     <div className={notice ? css.notice : css.noticeHidden} role={assertiveNotice ? 'alert' : 'status'} aria-live={assertiveNotice ? 'assertive' : 'polite'} aria-atomic="true"><span>{notice}</span>{undoArchiveId && <button onClick={() => void undoArchive()}>撤销归档</button>}<button aria-label="关闭提示" onClick={() => setNotice('')}>×</button></div>
@@ -935,7 +935,7 @@ export function ReviewPanel({ requirement, act, api, focusedItemId, openRequest,
   }, [openRequest?.requestId])
   return <>
     <div className={css.panelSummary}><div><strong>问题检查清单</strong><span>{unansweredCount > 0 ? `${unansweredCount} 项待回答 · ${active.filter(item => item.severity === 'blocking' && item.status === 'open').length} 项阻塞下一阶段` : answeredCount > 0 ? '回答已齐，下一步让 AI 回读' : active.length > 0 ? `${active.length} 项等待后续处理` : '当前版本已全部处理'}</span></div>{current.length > 0 && <div className={css.checklistMeter}><small>{processedCount}/{current.length}</small><progress aria-label={`已回答或处理 ${processedCount} 项，共 ${current.length} 项`} value={processedCount} max={current.length}/></div>}</div>
-    {currentRuns.length > 0 && <details className={css.runHistory}><summary>AI 运行中心（{currentRuns.length}）{currentStageSessionId ? ' · 当前阶段复用 1 个会话' : ''}</summary>{currentRuns.slice().reverse().map(run => { const endedAt = ['completed', 'failed'].includes(run.status) ? run.updatedAt : Date.now(); const sharedSession = Boolean(run.sessionId && run.sessionId === currentStageSessionId); const step = run.status === 'queued' ? '等待可用执行槽' : run.status === 'running' ? sharedSession ? '复用当前阶段上下文并分析增量' : '读取工作区并核对当前正文' : run.status === 'completed' ? '检查结果已写入问题清单' : '运行中断，输入和历史结果已保留'; return <div className={css.run} key={run.id}><div><strong>{reviewKindLabel[run.kind]}</strong><span>{statusLabel[run.status] ?? run.status}</span></div><dl><div><dt>当前步骤</dt><dd>{step}</dd></div><div><dt>开始</dt><dd title={new Date(run.createdAt).toLocaleString()}>{relativeTime(run.createdAt)}</dd></div><div><dt>耗时</dt><dd>{durationText(endedAt - run.createdAt)}</dd></div></dl>{run.maturitySummary && <MarkdownBody text={run.maturitySummary}/>} {run.error && <><p className={css.chatError}>{friendlyActionError(run.error)}</p><button className={css.panelAction} onClick={() => void act(actor => ({ kind: 'review.request', participant: actor, requirementId: requirement.id, reviewKind: run.kind }))}>重试本次检查</button></>}{run.sessionId && <AiConversation api={api} requirementId={requirement.id} sessionId={run.sessionId}/>}</div>})}</details>}
+    {currentRuns.length > 0 && <details className={css.runHistory}><summary>AI 运行中心（{currentRuns.length}）{currentStageSessionId ? ' · 当前阶段共享会话记录' : ''}</summary>{currentRuns.slice().reverse().map(run => { const endedAt = ['completed', 'failed'].includes(run.status) ? run.updatedAt : Date.now(); const step = run.status === 'queued' ? '等待可用执行槽' : run.status === 'running' ? '读取工作区并核对当前正文' : run.status === 'completed' ? '检查结果已写入问题清单' : '运行中断，输入和历史结果已保留'; return <div className={css.run} key={run.id}><div><strong>{reviewKindLabel[run.kind]}</strong><span>{statusLabel[run.status] ?? run.status}</span></div><dl><div><dt>当前步骤</dt><dd>{step}</dd></div><div><dt>开始</dt><dd title={new Date(run.createdAt).toLocaleString()}>{relativeTime(run.createdAt)}</dd></div><div><dt>耗时</dt><dd>{durationText(endedAt - run.createdAt)}</dd></div></dl>{run.maturitySummary && <MarkdownBody text={run.maturitySummary}/>} {run.error && <><p className={css.chatError}>{friendlyActionError(run.error)}</p><button className={css.panelAction} onClick={() => void act(actor => ({ kind: 'review.request', participant: actor, requirementId: requirement.id, reviewKind: run.kind }))}>重试本次检查</button></>}{run.sessionId && <AiConversation api={api} requirementId={requirement.id} sessionId={run.sessionId}/>}</div>})}</details>}
     {current.length === 0 && <div className={css.emptyPanel}><strong>{emptyReviewLabel}</strong></div>}
     {active.length > 0 && <ReviewChecklist items={active} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/>}
     {deferred.length > 0 && <details className={css.historyGroup}><summary>保留待核对 · {deferred.length}</summary><ReviewChecklist items={deferred} selectedItemId={focusedItemId ?? selectedItemId} open={openItem}/></details>}

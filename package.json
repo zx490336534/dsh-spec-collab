@@ -60,7 +60,11 @@
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --maxWorkers=1 --minWorkers=1 --exclude tests/e2e/**",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:codex": "tsdown --config codex-plugin/build.config.ts",
+    "test:codex": "node --test codex-plugin/tests/*.node.mjs",
+    "test:codex:e2e": "playwright test --config codex-plugin/tests/playwright.config.ts",
+    "test:codex:live": "node codex-plugin/tests/live.mjs"
   },
   "dependencies": {
     "@toast-ui/editor": "3.2.2",

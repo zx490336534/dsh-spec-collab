@@ -1,0 +1,20 @@
+{
+  "name": "spec-collab",
+  "version": "0.1.0",
+  "description": "用 Codex 审核需求，以 Git 追踪正文，由产品和研发共同确认 Ready Spec。",
+  "author": { "name": "zx490336534" },
+  "homepage": "https://github.com/zx490336534/dsh-spec-collab/tree/main/codex-plugin",
+  "repository": "https://github.com/zx490336534/dsh-spec-collab",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "Spec Collab",
+    "shortDescription": "产品和研发共创 Ready Spec",
+    "longDescription": "把原始需求整理成可审阅的 Markdown。Codex 读取项目上下文并提出问题和候选修改，产品与研发确认同一 Git 版本后导出 Ready Spec。",
+    "developerName": "zx490336534",
+    "category": "Productivity",
+    "defaultPrompt": ["打开当前项目的需求工作台", "列出 Spec 需求和当前审核阶段", "读取一条需求的当前版本和 Ready 条件"]
+  }
+}
