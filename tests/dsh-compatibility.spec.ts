@@ -8,7 +8,7 @@ import { satisfies } from 'semver'
 import * as plugin from '../src/index.ts'
 
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const supportedRuntimes = ['0.2.1-rc.5', '0.2.1', '0.2.2-rc.1', '0.2.2-rc.3', '0.2.2-rc.5', '0.2.2']
+const supportedRuntimes = ['0.2.1-rc.5', '0.2.1', '0.2.2-rc.1', '0.2.2-rc.3', '0.2.2-rc.5', '0.2.2', '0.2.3-alpha.2']
 
 describe('DSH compatibility contract', () => {
   it.each(supportedRuntimes)('accepts the supported runtime %s without an exemption', runtimeVersion => {
@@ -20,7 +20,7 @@ describe('DSH compatibility contract', () => {
     }
   })
 
-  it.each(['0.1.1-rc.1', '0.2.1-rc.4', '0.2.2-rc.0', '0.2.3-rc.1', '0.2.3', '0.3.0-rc.1'])('rejects runtimes outside the supported SDK window: %s', runtimeVersion => {
+  it.each(['0.1.1-rc.1', '0.2.1-rc.4', '0.2.2-rc.0', '0.2.3-alpha.1', '0.2.3-alpha.3', '0.2.3-rc.1', '0.2.3', '0.3.0-rc.1'])('rejects runtimes outside the supported SDK window: %s', runtimeVersion => {
     expect(evaluatePluginCompatibility(manifest, {}, runtimeVersion)).toMatchObject({ exempted: false })
   })
 

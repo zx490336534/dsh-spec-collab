@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 — 2026-11-25
+
+- Use a native DSH sidebar panel with a document annotation icon. The workspace tree stays available while the Spec workbench occupies the center panel.
+- Add a searchable requirement library and a two-pane workbench with version progress, the next action, responsive collaboration controls, and host light and dark themes.
+- Keep the actual base commit when restoring a draft so that saves detect concurrent changes. Streamline identity registration and decision editing.
+- Verify the packed plugin on DSH 0.2.3-alpha.2 and declare compatibility for that exact Alpha version alongside the existing 0.2.x ranges.
+
 ## 0.5.0 — 2026-11-25
 
 - Share one commit transition across saves, renames, restores, and accepted patches. Invalidate the previous Ready package, whole-version confirmations, and pending patches when the Spec advances.

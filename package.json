@@ -1,6 +1,6 @@
 {
   "name": "dsh-spec-collab",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "AI-assisted requirement clarification and Git-backed Spec co-creation for DeepSeek Harness, ending at a human-confirmed Ready Spec.",
   "keywords": [
     "deepseek-harness",
@@ -67,7 +67,7 @@
     "lightningcss": "^1.32.0",
     "markdown-it": "^14.1.0",
     "prosemirror-inputrules": "^1.5.0",
-    "@deepseek-ai/schemastery": "~3.18.5 || ~3.19.0"
+    "@deepseek-ai/schemastery": "~3.18.5 || ~3.19.0 || 3.20.0-alpha.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.0",
@@ -95,19 +95,19 @@
     "vitest": "^3.0.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.5 || ~4.1.0",
-    "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0",
-    "@deepseek-ai/dsh-api-session-controller": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0",
-    "@deepseek-ai/dsh-host-webserver": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0",
-    "@deepseek-ai/dsh-system-prompt": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0",
-    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0",
-    "@deepseek-ai/dsh-workspace": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0",
+    "@deepseek-ai/cordis": "~4.0.5 || ~4.1.0 || 4.2.0-alpha.1",
+    "@deepseek-ai/dsh-agent-preset-registry": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2",
+    "@deepseek-ai/dsh-host-webserver": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2",
+    "@deepseek-ai/dsh-workspace": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "engines": {
     "node": ">=20",
-    "dsh": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0"
+    "dsh": ">=0.2.1-rc.5 <0.2.2-0 || >=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2"
   },
   "packageManager": "pnpm@9.9.0",
   "license": "Apache-2.0"
