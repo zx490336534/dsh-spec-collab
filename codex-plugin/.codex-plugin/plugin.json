@@ -1,6 +1,6 @@
 {
   "name": "spec-collab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "用 Codex 审核需求，以 Git 追踪正文，由产品和研发共同确认 Ready Spec。",
   "author": { "name": "zx490336534" },
   "homepage": "https://github.com/zx490336534/dsh-spec-collab/tree/main/codex-plugin",

@@ -1104,10 +1104,60 @@ function sections$1(markdown) {
 	} else if (heading) result.set(heading, `${result.get(heading) ?? ""}\n${line}`);
 	return result;
 }
+const acceptancePlaceholder = /待澄清|待补充|TODO/i;
 function acceptance(markdown) {
+	let fence = "";
+	const visible = markdown.replace(/<!--.*?-->/gs, "").split(/\r?\n/).map((line) => {
+		const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+		if (fence) {
+			if (delimiter?.[1]?.startsWith(fence) && !delimiter[2]?.trim()) fence = "";
+			return "";
+		}
+		if (!delimiter) return line;
+		fence = delimiter[1];
+		return "";
+	}).join("\n");
 	const result = /* @__PURE__ */ new Map();
-	for (const match of markdown.matchAll(/\*\*(AC-[A-Za-z0-9-]+)(?:\s+[^*]+)?\*\*\s*[：:]\s*(.+)/g)) result.set(match[1], match[2].trim());
+	for (const match of visible.matchAll(/\*\*(AC-[A-Za-z0-9-]+)(?:[ \t]+[^*\n]+)?\*\*[ \t]*[：:][ \t]*(.+)/g)) {
+		const text = match[2].trim();
+		result.set(match[1], {
+			text,
+			complete: Boolean(text) && !acceptancePlaceholder.test(text)
+		});
+	}
+	let criterion;
+	const closeCriterion = (end) => {
+		if (!criterion) return;
+		const body = visible.slice(criterion.start, end).trim();
+		const text = `${criterion.title}\n${body}`;
+		const complete = !acceptancePlaceholder.test(text) && body.split("\n").some(hasAcceptanceDetail);
+		result.set(criterion.id, {
+			text,
+			complete
+		});
+		criterion = void 0;
+	};
+	for (const heading of visible.matchAll(/^ {0,3}(#{1,6})[ \t]+(.+)$/gm)) {
+		const level = heading[1].length;
+		const title = heading[2].trim();
+		const id = level > 1 ? /^(?:\*\*)?(AC-[A-Za-z0-9-]+)(?=[\s*：:]|$)/.exec(title)?.[1] : void 0;
+		if (criterion && (id || level <= criterion.level)) closeCriterion(heading.index);
+		if (id) criterion = {
+			id,
+			level,
+			title,
+			start: heading.index + heading[0].length
+		};
+	}
+	closeCriterion(visible.length);
 	return result;
+}
+function hasAcceptanceDetail(line) {
+	const text = line.trim();
+	if (!text || /^#+[ \t]|^[:|\s-]+$/.test(text)) return false;
+	if (!text.includes("|")) return true;
+	const cells = text.replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((cell) => cell.trim());
+	return cells.length >= 3 && cells.every(Boolean) && cells.join("|") !== "前提|操作|预期结果";
 }
 function changedScopes(before, after) {
 	const a = sections$1(before);
@@ -1118,7 +1168,7 @@ function changedScopes(before, after) {
 	const acNames = /* @__PURE__ */ new Set([...acA.keys(), ...acB.keys()]);
 	return {
 		sections: [...sectionNames].filter((key) => a.get(key) !== b.get(key)),
-		acceptanceIds: [...acNames].filter((key) => acA.get(key) !== acB.get(key))
+		acceptanceIds: [...acNames].filter((key) => acA.get(key)?.text !== acB.get(key)?.text)
 	};
 }
 function intersects(left, right) {
@@ -1145,12 +1195,13 @@ function decisionScopeAnchors(markdown, affectedSections, affectedAcceptanceIds)
 	}
 	const lines = markdown.split("\n");
 	for (const acceptanceId of affectedAcceptanceIds.map((value) => value.trim()).filter(Boolean)) {
-		const index = lines.findIndex((line) => normalizeAnchorText(line).includes(normalizeAnchorText(acceptanceId)));
+		const index = lines.findIndex((line) => line.match(/\bAC-[A-Za-z0-9-]+/g)?.includes(acceptanceId));
 		if (index >= 0) {
 			const heading = headingForLine(lines, index);
+			const quote = lines[index].trim();
 			anchors.push({
-				...heading ? { heading } : {},
-				quote: lines[index].trim()
+				...heading && sectionMap.get(heading)?.includes(quote) ? { heading } : {},
+				quote
 			});
 		}
 	}
@@ -1201,6 +1252,7 @@ function invalidateAffected(record, changedSections, changedAcceptanceIds, curre
 function readiness(markdown, record) {
 	const sectionMap = sections$1(markdown);
 	const ac = acceptance(markdown);
+	const acceptanceComplete = ac.size > 0 && [...ac.values()].every((criterion) => criterion.complete);
 	const meaningful = (name) => {
 		const value = sectionMap.get(name)?.replace(/<!--.*?-->/gs, "").trim() ?? "";
 		return value.length >= 12 && !/待澄清|待补充|TODO/i.test(value);
@@ -1214,8 +1266,8 @@ function readiness(markdown, record) {
 		},
 		{
 			key: "acceptance",
-			passed: ac.size > 0 && [...ac.values()].every((value) => !/待澄清|待补充|TODO/i.test(value)),
-			reasons: ac.size === 0 ? ["缺少稳定 AC ID 与可判定结果"] : [...ac.values()].some((value) => /待澄清|待补充|TODO/i.test(value)) ? ["验收标准仍含占位内容"] : []
+			passed: acceptanceComplete,
+			reasons: acceptanceComplete ? [] : ac.size === 0 ? ["缺少稳定 AC ID 与可判定结果"] : ["验收标准缺少场景或仍含占位内容"]
 		},
 		{
 			key: "scope",
@@ -2683,7 +2735,7 @@ function startMcp(call) {
 					capabilities: { tools: {} },
 					serverInfo: {
 						name: "spec-collab",
-						version: "0.1.0"
+						version: "0.1.1"
 					}
 				};
 			} else if (message.method === "ping") result = {};

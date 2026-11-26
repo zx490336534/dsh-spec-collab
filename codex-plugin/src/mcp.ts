@@ -56,7 +56,7 @@ export function startMcp(call: (name: string, args: unknown) => Promise<unknown>
         const requested = message.params?.protocolVersion
         const supported = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']
         result = { protocolVersion: supported.includes(requested) ? requested : '2025-11-25',
-          capabilities: { tools: {} }, serverInfo: { name: 'spec-collab', version: '0.1.0' } }
+          capabilities: { tools: {} }, serverInfo: { name: 'spec-collab', version: '0.1.1' } }
       } else if (message.method === 'ping') result = {}
       else if (message.method === 'tools/list') result = { tools }
       else if (message.method === 'tools/call') {

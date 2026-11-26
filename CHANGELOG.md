@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 — 2026-11-26
+
+- Recognize numbered acceptance headings with scenario tables. Changes to a scenario invalidate confirmations scoped to that acceptance criterion.
+- Include the product reply and its disposition when DSH reads a review item so the second review can use the actual answer.
+- Ship the shared collaboration engine and review changes introduced with the Codex port. Structured findings and an accompanying candidate can be saved together in a single ledger transaction.
+- Retain the DSH sidebar, session coordinator and Ready gates. Describe review progress in terms of the current version and project.
+- Make the DSH browser suite dismiss the optional first-run sign-in dialog in an isolated profile.
+
 ## 0.6.0 — 2026-11-25
 
 - Use a native DSH sidebar panel with a document annotation icon. The workspace tree stays available while the Spec workbench occupies the center panel.

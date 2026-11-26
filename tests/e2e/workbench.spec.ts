@@ -2,6 +2,8 @@ import { AxeBuilder } from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 
 async function openWorkbench(page: Page, openDocument = true): Promise<void> {
+  const signIn = page.getByRole('dialog', { name: '开始使用' })
+  await page.addLocatorHandler(signIn, modal => modal.getByRole('button', { name: '关闭', exact: true }).click())
   await page.goto(process.env.SPEC_COLLAB_E2E_ENTRY ?? '/')
   const intro = page.getByRole('dialog', { name: '预览版说明' })
   if (await intro.isVisible()) await intro.getByRole('button', { name: '继续' }).click()

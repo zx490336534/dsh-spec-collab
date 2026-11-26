@@ -22,8 +22,57 @@ export function advance(record: RequirementRecord, participant: ParticipantSnaps
   throw new Error('stage cannot advance directly')
 }
 function sections(markdown: string): Map<string, string> { const result = new Map<string, string>(); let heading = ''; for (const line of markdown.split('\n')) { if (/^##\s+/.test(line)) { heading = line.replace(/^##\s+/, '').trim(); result.set(heading, '') } else if (heading) result.set(heading, `${result.get(heading) ?? ''}\n${line}`) } return result }
-function acceptance(markdown: string): Map<string, string> { const result = new Map<string, string>(); for (const match of markdown.matchAll(/\*\*(AC-[A-Za-z0-9-]+)(?:\s+[^*]+)?\*\*\s*[：:]\s*(.+)/g)) result.set(match[1]!, match[2]!.trim()); return result }
-function changedScopes(before: string, after: string): { sections: string[]; acceptanceIds: string[] } { const a = sections(before); const b = sections(after); const sectionNames = new Set([...a.keys(), ...b.keys()]); const acA = acceptance(before); const acB = acceptance(after); const acNames = new Set([...acA.keys(), ...acB.keys()]); return { sections: [...sectionNames].filter(key => a.get(key) !== b.get(key)), acceptanceIds: [...acNames].filter(key => acA.get(key) !== acB.get(key)) } }
+
+const acceptancePlaceholder = /待澄清|待补充|TODO/i
+
+function acceptance(markdown: string): Map<string, { text: string; complete: boolean }> {
+  let fence = ''
+  const visible = markdown.replace(/<!--.*?-->/gs, '').split(/\r?\n/).map(line => {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+    if (fence) {
+      if (delimiter?.[1]?.startsWith(fence) && !delimiter[2]?.trim()) fence = ''
+      return ''
+    }
+    if (!delimiter) return line
+    fence = delimiter[1]!
+    return ''
+  }).join('\n')
+
+  const result = new Map<string, { text: string; complete: boolean }>()
+  for (const match of visible.matchAll(/\*\*(AC-[A-Za-z0-9-]+)(?:[ \t]+[^*\n]+)?\*\*[ \t]*[：:][ \t]*(.+)/g)) {
+    const text = match[2]!.trim()
+    result.set(match[1]!, { text, complete: Boolean(text) && !acceptancePlaceholder.test(text) })
+  }
+
+  let criterion: { id: string; level: number; title: string; start: number } | undefined
+  const closeCriterion = (end: number): void => {
+    if (!criterion) return
+    const body = visible.slice(criterion.start, end).trim()
+    const text = `${criterion.title}\n${body}`
+    const complete = !acceptancePlaceholder.test(text) && body.split('\n').some(hasAcceptanceDetail)
+    result.set(criterion.id, { text, complete })
+    criterion = undefined
+  }
+  for (const heading of visible.matchAll(/^ {0,3}(#{1,6})[ \t]+(.+)$/gm)) {
+    const level = heading[1]!.length
+    const title = heading[2]!.trim()
+    const id = level > 1 ? /^(?:\*\*)?(AC-[A-Za-z0-9-]+)(?=[\s*：:]|$)/.exec(title)?.[1] : undefined
+    if (criterion && (id || level <= criterion.level)) closeCriterion(heading.index)
+    if (id) criterion = { id, level, title, start: heading.index + heading[0].length }
+  }
+  closeCriterion(visible.length)
+  return result
+}
+
+function hasAcceptanceDetail(line: string): boolean {
+  const text = line.trim()
+  if (!text || /^#+[ \t]|^[:|\s-]+$/.test(text)) return false
+  if (!text.includes('|')) return true
+  const cells = text.replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map(cell => cell.trim())
+  return cells.length >= 3 && cells.every(Boolean) && cells.join('|') !== '前提|操作|预期结果'
+}
+
+function changedScopes(before: string, after: string): { sections: string[]; acceptanceIds: string[] } { const a = sections(before); const b = sections(after); const sectionNames = new Set([...a.keys(), ...b.keys()]); const acA = acceptance(before); const acB = acceptance(after); const acNames = new Set([...acA.keys(), ...acB.keys()]); return { sections: [...sectionNames].filter(key => a.get(key) !== b.get(key)), acceptanceIds: [...acNames].filter(key => acA.get(key)?.text !== acB.get(key)?.text) } }
 function intersects(left: string[], right: string[]): boolean { return left.some(item => right.includes(item)) }
 export function normalizeAnchorText(value: string): string { return value.replace(/[`*_>#\[\]()~-]/g, '').replace(/\s+/g, '').toLocaleLowerCase() }
 function headingForLine(lines: string[], index: number): string | undefined {
@@ -42,10 +91,11 @@ export function decisionScopeAnchors(markdown: string, affectedSections: string[
   }
   const lines = markdown.split('\n')
   for (const acceptanceId of affectedAcceptanceIds.map(value => value.trim()).filter(Boolean)) {
-    const index = lines.findIndex(line => normalizeAnchorText(line).includes(normalizeAnchorText(acceptanceId)))
+    const index = lines.findIndex(line => line.match(/\bAC-[A-Za-z0-9-]+/g)?.includes(acceptanceId))
     if (index >= 0) {
       const heading = headingForLine(lines, index)
-      anchors.push({ ...(heading ? { heading } : {}), quote: lines[index]!.trim() })
+      const quote = lines[index]!.trim()
+      anchors.push({ ...(heading && sectionMap.get(heading)?.includes(quote) ? { heading } : {}), quote })
     }
   }
   return anchors
@@ -73,11 +123,12 @@ export function invalidateAffected(record: RequirementRecord, changedSections: s
 }
 export function readiness(markdown: string, record: RequirementRecord): ReadinessCheck[] {
   const sectionMap = sections(markdown); const ac = acceptance(markdown)
+  const acceptanceComplete = ac.size > 0 && [...ac.values()].every(criterion => criterion.complete)
   const meaningful = (name: string): boolean => { const value = sectionMap.get(name)?.replace(/<!--.*?-->/gs, '').trim() ?? ''; return value.length >= 12 && !/待澄清|待补充|TODO/i.test(value) }
   const blockers = record.reviewItems.filter(item => item.commit === record.currentCommit && item.severity === 'blocking' && !['resolved', 'non-blocking-verify'].includes(item.status)).map(item => item.statement)
   return [
     { key: 'goal', passed: meaningful('目标与用户结果'), reasons: meaningful('目标与用户结果') ? [] : ['缺少可观察的目标与用户结果'] },
-    { key: 'acceptance', passed: ac.size > 0 && [...ac.values()].every(value => !/待澄清|待补充|TODO/i.test(value)), reasons: ac.size === 0 ? ['缺少稳定 AC ID 与可判定结果'] : [...ac.values()].some(value => /待澄清|待补充|TODO/i.test(value)) ? ['验收标准仍含占位内容'] : [] },
+    { key: 'acceptance', passed: acceptanceComplete, reasons: acceptanceComplete ? [] : ac.size === 0 ? ['缺少稳定 AC ID 与可判定结果'] : ['验收标准缺少场景或仍含占位内容'] },
     { key: 'scope', passed: meaningful('范围与非范围'), reasons: meaningful('范围与非范围') ? [] : ['范围与非范围不完整'] },
     { key: 'semantics', passed: meaningful('业务术语与规则'), reasons: meaningful('业务术语与规则') ? [] : ['关键术语和规则不完整'] },
     { key: 'evidence', passed: record.sources.every(source => source.accessStatus !== 'missing') && blockers.length === 0, reasons: [...record.sources.filter(source => source.accessStatus === 'missing').map(source => `来源不可访问：${source.label}`), ...blockers] },

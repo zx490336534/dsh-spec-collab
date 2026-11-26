@@ -25,7 +25,20 @@ export function specReadTool(engine: CollaborationEngine) {
       const include = new Set(args.include ?? ['spec', 'review-items', 'comments', 'decisions', 'confirmations', 'sources', 'readiness'])
       const rows = [`# ${view.title}`, `stage: ${view.stage}`, `commit: ${view.currentCommit}`]
       if (include.has('spec')) rows.push('', '## Spec', view.version.markdown)
-      if (include.has('review-items')) rows.push('', '## Review Items', ...view.reviewItems.map(item => `- ${item.id} [${item.severity}/${item.status}/${item.epistemicStatus}] ${item.statement}\n  Question: ${item.question}\n  Spec anchors: ${(item.sourceAnchors ?? []).map(anchor => `${anchor.heading ? `${anchor.heading}: ` : ''}${anchor.quote}`).join(' / ') || 'none'}\n  Recommended options: ${(item.recommendedOptions ?? []).join(' / ') || 'none'}\n  Evidence: ${item.evidence.map(evidence => `${evidence.source}${evidence.version ? `@${evidence.version}` : ''}`).join(', ') || 'none'}`))
+      if (include.has('review-items')) {
+        rows.push('', '## Review Items')
+        for (const item of view.reviewItems) {
+          rows.push(
+            `- ${item.id} [${item.severity}/${item.status}/${item.epistemicStatus}] ${item.statement}`,
+            `  Commit: ${item.commit}`,
+            `  Question: ${item.question}`,
+            `  Spec anchors: ${(item.sourceAnchors ?? []).map(anchor => `${anchor.heading ? `${anchor.heading}: ` : ''}${anchor.quote}`).join(' / ') || 'none'}`,
+            `  Recommended options: ${(item.recommendedOptions ?? []).join(' / ') || 'none'}`,
+            `  Evidence: ${item.evidence.map(evidence => `${evidence.source}${evidence.version ? `@${evidence.version}` : ''}`).join(', ') || 'none'}`,
+          )
+          if (item.response) rows.push(`  Response [${item.response.disposition}] ${item.response.participant.nickname}: ${item.response.body}`)
+        }
+      }
       if (include.has('comments')) rows.push('', '## Comments', ...view.comments.map(item => `- ${item.id} [${item.status}] “${item.anchor?.quote ?? '整篇需求'}” ${item.author.nickname}: ${item.body}\n  Replies: ${item.replies.map(reply => `${reply.author.nickname}: ${reply.body}`).join(' / ') || 'none'}`))
       if (include.has('decisions')) rows.push('', '## Decisions', ...view.decisions.map(item => `- ${item.id} [${item.status}] ${item.question}: ${item.decision}`))
       if (include.has('confirmations')) rows.push('', '## Confirmations', ...view.confirmations.map(item => `- ${item.role}/${item.scope}/${item.scopeId ?? 'document'} [${item.status}] ${item.participant.nickname} @ ${item.commit}`))

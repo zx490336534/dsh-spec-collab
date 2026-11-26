@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { CollaborationEngine, readiness, type AiCoordinator } from '../src/engine.ts'
 import { GitRequirementStore } from '../src/git-store.ts'
 import type { ParticipantSnapshot, RequirementView } from '../src/protocol.ts'
+import { specReadTool } from '../src/tools.ts'
 
 const product: ParticipantSnapshot = { participantId: 'participant-product', nickname: '产品甲', role: 'product', kind: 'human' }
 const engineering: ParticipantSnapshot = { participantId: 'participant-engineer', nickname: '研发乙', role: 'engineering', kind: 'human' }
@@ -327,6 +328,9 @@ describe('CollaborationEngine', () => {
     engine.apply('accept-direct', { kind: 'review.respond', participant: product, requirementId: view.id, reviewItemId: direct!.id, disposition: 'accept', body: '直接采用该规则。' })
     engine.apply('accept-modified', { kind: 'review.respond', participant: product, requirementId: view.id, reviewItemId: modified!.id, disposition: 'accept-modified', body: '采用建议并调整文案。' })
     expect(engine.view(view.id).reviewItems.map(item => item.status)).toEqual(['resolved', 'answered'])
+    const tool = specReadTool(engine)
+    const answer = await tool.execute({ requirementId: view.id, include: ['review-items'] }, {} as Parameters<typeof tool.execute>[1])
+    expect(answer).toEqual({ content: expect.stringContaining('Response [accept-modified] 产品甲: 采用建议并调整文案。') })
   })
 
   it('passes the six-part gate only for the exact jointly confirmed commit', async () => {
@@ -349,6 +353,35 @@ describe('CollaborationEngine', () => {
     const engine = setup(); const view = create(engine)
     const markdown = readyMarkdown(view).replace('**AC-RETRY-001**', '**AC-RETRY-001 网关超时重试**')
     expect(readiness(markdown, view).find(check => check.key === 'acceptance')).toEqual({ key: 'acceptance', passed: true, reasons: [] })
+  })
+
+  it('admits a headed acceptance table and expires its confirmation when a scenario changes', () => {
+    const engine = setup()
+    const requirement = create(engine)
+    const markdown = readyMarkdown(requirement).replace(/^- \*\*AC-RETRY-001\*\*.+$/m, [
+      '### AC-RETRY-001 网关超时重试', '',
+      '| 前提 | 操作 | 预期结果 |',
+      '| --- | --- | --- |',
+      '| 网关连续超时 | 提交订单 | 最多重试两次并返回最终状态 |',
+    ].join('\n'))
+    const saved = engine.apply('save-table', { kind: 'version.save', participant: product, requirementId: requirement.id, baseCommit: requirement.currentCommit, markdown, summary: '补齐验收表格' })
+    if (!saved.ok) throw new Error(saved.error)
+    expect(saved.requirement.readiness.find(check => check.key === 'acceptance')).toMatchObject({ passed: true })
+    expect(readiness(markdown.replace(/^\| 网关连续超时.+$/m, ''), saved.requirement).find(check => check.key === 'acceptance')).toMatchObject({ passed: false })
+    expect(readiness(markdown.replace('最多重试两次并返回最终状态 |', '待澄清 |'), saved.requirement).find(check => check.key === 'acceptance')).toMatchObject({ passed: false })
+    const confirmed = engine.apply('confirm-table', { kind: 'confirmation.create', participant: product, requirementId: requirement.id, role: 'product', scope: 'acceptance-criterion', scopeId: 'AC-RETRY-001' })
+    if (!confirmed.ok) throw new Error(confirmed.error)
+    const decided = engine.apply('decide-table', { kind: 'decision.create', participant: product, requirementId: requirement.id, question: '重试几次？', options: [], decision: '重试两次', rationale: '保持用户等待时间可控', affectedSections: [], affectedAcceptanceIds: ['AC-RETRY-001'] })
+    if (!decided.ok) throw new Error(decided.error)
+    const unrelatedMarkdown = `${markdown}\n另外记录压测账号。`
+    const unrelated = engine.apply('change-tests', { kind: 'version.save', participant: product, requirementId: requirement.id, baseCommit: saved.requirement.currentCommit, markdown: unrelatedMarkdown, summary: '更新测试账号' })
+    if (!unrelated.ok) throw new Error(unrelated.error)
+    expect(unrelated.requirement.confirmations[0]?.status).toBe('active')
+    expect(unrelated.requirement.decisions[0]?.status).toBe('active')
+    const next = engine.apply('change-table', { kind: 'version.save', participant: product, requirementId: requirement.id, baseCommit: unrelated.requirement.currentCommit, markdown: unrelatedMarkdown.replace('最多重试两次并返回最终状态 |', '最多重试一次并返回最终状态 |'), summary: '调整超时重试次数' })
+    if (!next.ok) throw new Error(next.error)
+    expect(next.requirement.confirmations).toEqual([expect.objectContaining({ scopeId: 'AC-RETRY-001', status: 'invalidated' })])
+    expect(next.requirement.decisions[0]?.status).toBe('invalidated')
   })
 
   it('does not carry blocking findings from an older commit into readiness', async () => {

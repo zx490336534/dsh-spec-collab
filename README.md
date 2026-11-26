@@ -9,7 +9,7 @@
 
 ## Codex 版本
 
-[Spec Collab for Codex](codex-plugin/README.md) 可直接从本仓库的 Marketplace 安装。它复用同一套 Git 版本、审核流程和 Ready 准入规则，在本地浏览器工作台完成产研共审。
+[Spec Collab for Codex](https://github.com/zx490336534/dsh-spec-collab/tree/main/codex-plugin#readme) 可直接从本仓库的 Marketplace 安装。它复用同一套 Git 版本、审核流程和 Ready 准入规则，在本地浏览器工作台完成产研共审。
 
 ## 从想法到交付
 
@@ -33,12 +33,12 @@
 
 ## 安装
 
-**桌面版** · 在 DSH「插件」中添加 `dsh-spec-collab@0.6.0`，然后打开侧栏的「需求讨论」。
+**桌面版** · 在 DSH「插件」中添加 `dsh-spec-collab@0.6.1`，然后打开侧栏的「需求讨论」。
 
 **独立 Web** · 使用与宿主同版本的 CLI 安装到正在使用的 profile。下面以 `0.2.2-rc.5` 为例。
 
 ```sh
-npx -y @deepseek-ai/dsh@0.2.2-rc.5 plugin --profile web add dsh-spec-collab@0.6.0
+npx -y @deepseek-ai/dsh@0.2.2-rc.5 plugin --profile web add dsh-spec-collab@0.6.1
 ```
 
 宿主需安装 Git，并为 AI 审核配置可用模型。插件支持 DSH `0.2.1-rc.5` 起的 `0.2.1` 系列、`0.2.2-rc.1` 起的 `0.2.2` 系列，以及 `0.2.3-alpha.2`。
