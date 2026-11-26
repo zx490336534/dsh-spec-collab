@@ -55,7 +55,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const contexts = new ReviewContextCatalog(config)
   const prompts = resolveReviewPrompts(config.prompts)
   const engine = new CollaborationEngine(join(dataRoot, 'collaboration-v3.json'), new GitRequirementStore(config.repositoryPath ?? join(dataRoot, 'repository')), { legacyPath: join(dataRoot, 'collaboration-v2.json') })
-  const coordinator = new DshReviewCoordinator(ctx, contexts, prompts)
+  const coordinator = new DshReviewCoordinator(ctx, contexts, prompts, (requirementId, sourceId, error) => engine.markAiFailure(requirementId, sourceId, error))
   engine.setCoordinator(coordinator)
   ctx.effect(() => () => coordinator.dispose(), 'spec-collab: review lifetime')
   ctx.effect(() => { const disposers = makeRoutes(engine, coordinator).map(route => ctx.webServer.register(route)); return () => { for (const dispose of disposers) dispose() } }, 'spec-collab: routes')

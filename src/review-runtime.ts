@@ -1,4 +1,4 @@
-import type { SessionController, SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
+import type { SessionController, SessionEventFrame, SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { AgentPresetRegistry } from '@deepseek-ai/dsh-agent-preset-registry'
 import type { WorkspaceId, WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
 import type { AiCoordinator } from './engine.ts'
@@ -16,6 +16,7 @@ interface ReviewHistoryPage {
 interface ReviewHistoryReader {
   events?(request: { address: { kind: 'session'; sessionId: SessionPromptRequest['sessionId'] }; maxMessages: number; throughSeq?: number; beforeSeq?: number }, signal: AbortSignal): Promise<ReviewHistoryPage>
   inspect?(sessionId: SessionPromptRequest['sessionId'], signal: AbortSignal): Promise<{ events: readonly ReviewHistoryEvent[] }>
+  observeEvent?: SessionController['observeEvent']
 }
 export interface DshReviewHost {
   sessionController: Pick<SessionController, 'create' | 'rename' | 'prompt'> & ReviewHistoryReader
@@ -23,12 +24,13 @@ export interface DshReviewHost {
   agentPresets: Pick<AgentPresetRegistry, 'list'>
 }
 const FOLLOW_UP_METADATA = '\n\n<!-- dsh-spec-collab-follow-up:'
+type ReviewTask = { requirementId: string; sourceId: string }
 
 export class DshReviewCoordinator implements AiCoordinator {
   private readonly prompts: ResolvedReviewPrompts
   private readonly stageSessions = new Map<string, Promise<string>>()
   private readonly lifetime = new AbortController()
-  constructor(private readonly host: DshReviewHost, private readonly contexts = new ReviewContextCatalog(), prompts: ReviewPromptConfig = {}) {
+  constructor(private readonly host: DshReviewHost, private readonly contexts = new ReviewContextCatalog(), prompts: ReviewPromptConfig = {}, private readonly onUnfinished?: (requirementId: string, sourceId: string, error: string) => void) {
     this.prompts = resolveReviewPrompts(prompts)
   }
   dispose(): void { this.lifetime.abort(); this.stageSessions.clear() }
@@ -39,19 +41,19 @@ export class DshReviewCoordinator implements AiCoordinator {
     await this.resolveWorkspace(workspaceId)
   }
   async requestReview(input: { requirement: RequirementView; run: AiReviewRun; sessionId?: string }): Promise<string> {
-    return this.inStageSession(input.requirement, input.sessionId, reviewContinuationPrompt(input.requirement, input.run, this.prompts), async () => {
+    return this.inStageSession(input.requirement, input.run.id, input.sessionId, reviewContinuationPrompt(input.requirement, input.run, this.prompts), async task => {
       const context = this.contexts.resolve(input.requirement.workspaceId)
       const workspace = await this.resolveWorkspace(context.workspaceId)
       const snapshot = await readWorkspaceSnapshot(workspace.path, context.documentPaths)
-      return this.launch(`Spec ${input.run.kind}: ${input.requirement.title}`, reviewPrompt(input.requirement, input.run, context, workspace, snapshot, this.prompts), context.workspaceId, context.agentPreset)
+      return this.launch(`Spec ${input.run.kind}: ${input.requirement.title}`, reviewPrompt(input.requirement, input.run, context, workspace, snapshot, this.prompts), task, context.workspaceId, context.agentPreset)
     })
   }
   async requestCommentReply(input: { requirement: RequirementView; comment: CommentThread; sessionId?: string }): Promise<string> {
-    return this.inStageSession(input.requirement, input.sessionId, commentContinuationPrompt(input.requirement, input.comment, this.prompts), async () => {
+    return this.inStageSession(input.requirement, input.comment.id, input.sessionId, commentContinuationPrompt(input.requirement, input.comment, this.prompts), async task => {
       const context = this.contexts.resolve(input.requirement.workspaceId)
       const workspace = await this.resolveWorkspace(context.workspaceId)
       const snapshot = await readWorkspaceSnapshot(workspace.path, context.documentPaths)
-      return this.launch(`Spec ${input.requirement.stage}: ${input.requirement.title}`, commentPrompt(input.requirement, input.comment, context, workspace, snapshot, this.prompts), context.workspaceId, context.agentPreset)
+      return this.launch(`Spec ${input.requirement.stage}: ${input.requirement.title}`, commentPrompt(input.requirement, input.comment, context, workspace, snapshot, this.prompts), task, context.workspaceId, context.agentPreset)
     })
   }
   async conversation(sessionId: string): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
@@ -107,33 +109,67 @@ export class DshReviewCoordinator implements AiCoordinator {
     const promptText = `${renderPrompt(this.prompts.followUp, { CONTENT: content }).trim()}${FOLLOW_UP_METADATA}${metadata} -->`
     await this.promptExisting(sessionId, promptText)
   }
-  private async inStageSession(requirement: RequirementView, existingSessionId: string | undefined, continuation: string, launch: () => Promise<string>): Promise<string> {
+  private async inStageSession(requirement: RequirementView, sourceId: string, existingSessionId: string | undefined, continuation: string, launch: (task: ReviewTask) => Promise<string>): Promise<string> {
     const key = `${requirement.id}:${requirement.stage}:${requirement.stageCycle}`
+    const task = { requirementId: requirement.id, sourceId }
     if (existingSessionId !== undefined) {
       this.rememberStageSession(key, Promise.resolve(existingSessionId))
-      await this.promptExisting(existingSessionId, continuation); return existingSessionId
+      await this.promptExisting(existingSessionId, continuation, task); return existingSessionId
     }
     const pending = this.stageSessions.get(key)
-    if (pending !== undefined) { const sessionId = await pending; await this.promptExisting(sessionId, continuation); return sessionId }
-    const created = launch(); this.rememberStageSession(key, created)
+    if (pending !== undefined) { const sessionId = await pending; await this.promptExisting(sessionId, continuation, task); return sessionId }
+    const created = launch(task); this.rememberStageSession(key, created)
     try { return await created } catch (error) { if (this.stageSessions.get(key) === created) this.stageSessions.delete(key); throw error }
   }
   private rememberStageSession(key: string, session: Promise<string>): void { this.stageSessions.delete(key); this.stageSessions.set(key, session); while (this.stageSessions.size > 100) { const oldest = this.stageSessions.keys().next().value as string | undefined; if (oldest === undefined) break; this.stageSessions.delete(oldest) } }
-  private async promptExisting(sessionId: string, promptText: string): Promise<void> {
-    await this.host.sessionController.prompt({
-      requestId: `spec-collab-${crypto.randomUUID()}` as SessionPromptRequest['requestId'],
-      sessionId: sessionId as SessionPromptRequest['sessionId'],
-      mode: 'queue', content: [{ type: 'text', text: promptText }],
-    }, this.lifetime.signal)
+  private async promptExisting(sessionId: string, promptText: string, task?: ReviewTask): Promise<void> {
+    const controller = this.host.sessionController
+    const requestId = `spec-collab-${crypto.randomUUID()}` as SessionPromptRequest['requestId']
+    const address = { kind: 'session' as const, sessionId: sessionId as SessionPromptRequest['sessionId'] }
+    const send = async (): Promise<void> => {
+      await controller.prompt({ sessionId: address.sessionId, requestId, mode: 'queue', content: [{ type: 'text', text: promptText }] }, this.lifetime.signal)
+    }
+    if (!task || !this.onUnfinished || !controller.observeEvent) return send()
+
+    const abort = new AbortController()
+    const signal = AbortSignal.any([this.lifetime.signal, abort.signal])
+    const frames = controller.observeEvent({ address }, signal)[Symbol.asyncIterator]()
+    try {
+      // Subscribe before admission so even a quickly failed turn can be matched to this request.
+      const opening = await frames.next()
+      if (opening.done || opening.value.type !== 'ready') abort.abort()
+    } catch { abort.abort() }
+    try { await send() } catch (error) { abort.abort(); void frames.return?.().catch(() => undefined); throw error }
+    if (signal.aborted) { void frames.return?.().catch(() => undefined); return }
+    void this.observePromptEnd(frames, requestId, task, signal).catch(() => undefined).finally(() => abort.abort())
   }
-  private async launch(title: string, promptText: string, workspaceId: string, agentPreset?: string): Promise<string> {
+  private async observePromptEnd(frames: AsyncIterator<SessionEventFrame>, requestId: string, task: ReviewTask, signal: AbortSignal): Promise<void> {
+    let turn: number | undefined
+    let promptTurn: number | undefined
+    try {
+      for (;;) {
+        const frame = await frames.next()
+        if (frame.done || signal.aborted) return
+        if (frame.value.type !== 'event') continue
+        const { type, data } = frame.value.event
+        if (!isObject(data)) continue
+        if (type === 'turn/start' && typeof data.turn === 'number') turn = data.turn
+        if (type === 'user/message' && isObject(data.source) && data.source.rpcId === requestId) promptTurn = turn
+        if (type !== 'turn/end' || promptTurn === undefined || data.turn !== promptTurn) continue
+        const failed = isObject(data.reason) && data.reason.kind === 'error'
+        this.onUnfinished?.(task.requirementId, task.sourceId, failed ? '审核会话异常结束，可以重试当前版本' : '审核会话结束时未提交结果，可以重试当前版本')
+        return
+      }
+    } finally { await frames.return?.() }
+  }
+  private async launch(title: string, promptText: string, task: ReviewTask, workspaceId: string, agentPreset?: string): Promise<string> {
     if (agentPreset !== undefined) {
       const preset = (await this.host.agentPresets.list()).find(item => item.id === agentPreset)
       if (preset === undefined || preset.broken !== undefined) throw new Error('agent preset is unavailable')
     }
     const { sessionId } = await this.host.sessionController.create({ workspaceId: workspaceId as WorkspaceId, ...(agentPreset === undefined ? {} : { agentPreset }) })
     await this.host.sessionController.rename({ sessionId, title })
-    await this.promptExisting(sessionId, promptText.replaceAll('{{SESSION_ID}}', sessionId))
+    await this.promptExisting(sessionId, promptText.replaceAll('{{SESSION_ID}}', sessionId), task)
     return sessionId
   }
   private async resolveWorkspace(workspaceId: string): Promise<ReviewWorkspaceSummary> {

@@ -4,6 +4,7 @@
 
 - Recognize numbered acceptance headings with scenario tables. Changes to a scenario invalidate confirmations scoped to that acceptance criterion.
 - Include the product reply and its disposition when DSH reads a review item so the second review can use the actual answer.
+- Mark DSH reviews as failed and retryable when the corresponding model turn ends without submitting a result.
 - Ship the shared collaboration engine and review changes introduced with the Codex port. Structured findings and an accompanying candidate can be saved together in a single ledger transaction.
 - Retain the DSH sidebar, session coordinator and Ready gates. Describe review progress in terms of the current version and project.
 - Make the DSH browser suite dismiss the optional first-run sign-in dialog in an isolated profile.

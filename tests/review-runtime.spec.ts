@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { DshReviewHost } from '../src/review-runtime.ts'
 import type { AiReviewRun, CommentThread, RequirementView } from '../src/protocol.ts'
@@ -91,6 +91,37 @@ describe('DshReviewCoordinator context mounting', () => {
     coordinator.dispose()
     expect(signal?.aborted).toBe(true)
     await expect(coordinator.followUp('session-failed', '继续审核')).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('reports a failed turn only for the corresponding admitted review prompt', async () => {
+    let requestId: string | undefined
+    let closed = false
+    const fail = vi.fn()
+    const events = (type: string, data: unknown) => ({ type: 'event', event: { type, data } })
+    const api = {
+      sessionController: {
+        prompt: async (request: SessionPromptRequest) => { requestId = request.requestId; return { accepted: true } },
+        async *observeEvent() {
+          try {
+            yield { type: 'ready' }
+            yield events('turn/start', { turn: 1 })
+            yield events('user/message', { source: { rpcId: 'an-unrelated-prompt' } })
+            yield events('turn/end', { turn: 1, reason: { kind: 'error' } })
+            expect(fail).not.toHaveBeenCalled()
+            yield events('turn/start', { turn: 2 })
+            yield events('user/message', { source: { rpcId: requestId } })
+            yield events('turn/end', { turn: 2, reason: { kind: 'error' } })
+          } finally { closed = true }
+        },
+      },
+    } as unknown as DshReviewHost
+    const coordinator = new DshReviewCoordinator(api, new ReviewContextCatalog(), {}, fail)
+    const requirement = { id: 'requirement-failed', title: '报告导出', currentCommit: 'b'.repeat(40) } as RequirementView
+    try {
+      await expect(coordinator.requestReview({ requirement, run: { id: 'precheck-failed', kind: 'engineering-precheck' } as AiReviewRun, sessionId: 'existing-session' })).resolves.toBe('existing-session')
+      await vi.waitFor(() => expect(fail).toHaveBeenCalledExactlyOnceWith('requirement-failed', 'precheck-failed', expect.stringContaining('重试')))
+      expect(closed).toBe(true)
+    } finally { coordinator.dispose() }
   })
 
   it('reads all pages from the new history API at a fixed cursor in chronological order', async () => {
