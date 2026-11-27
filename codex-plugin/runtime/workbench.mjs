@@ -1218,13 +1218,13 @@ function decisionAnchorStillExists(markdown, anchor) {
 		return normalized.includes(context) || normalized.includes(quote);
 	});
 }
-function invalidateAffected(record, changedSections, changedAcceptanceIds, currentMarkdown) {
+function invalidateAffected(record, changedSections, changedAcceptanceIds, createId, currentMarkdown) {
 	for (const confirmation of record.confirmations) {
 		if (confirmation.status !== "active") continue;
 		if (confirmation.scope === "version" || confirmation.scope === "section" && confirmation.scopeId !== void 0 && changedSections.includes(confirmation.scopeId) || confirmation.scope === "acceptance-criterion" && confirmation.scopeId !== void 0 && changedAcceptanceIds.includes(confirmation.scopeId)) {
 			confirmation.status = "invalidated";
 			record.actionItems.push({
-				id: randomUUID(),
+				id: createId(),
 				requirementId: record.id,
 				sourceType: "confirmation",
 				sourceId: confirmation.id,
@@ -1291,7 +1291,7 @@ function readiness(markdown, record) {
 		}
 	];
 }
-function versionChanged(record, previousMarkdown, version, now) {
+function versionChanged(record, previousMarkdown, version, now, createId) {
 	const impact = changedScopes(previousMarkdown, version.markdown);
 	record.currentCommit = version.commit;
 	record.updatedAt = now;
@@ -1302,7 +1302,7 @@ function versionChanged(record, previousMarkdown, version, now) {
 		patch.status = "stale";
 		retireActionItems(record, "patch", patch.id, "invalidated", now);
 	}
-	invalidateAffected(record, impact.sections, impact.acceptanceIds, version.markdown);
+	invalidateAffected(record, impact.sections, impact.acceptanceIds, createId, version.markdown);
 }
 function retireActionItems(record, sourceType, sourceId, status, now) {
 	for (const task of record.actionItems) if (task.sourceType === sourceType && task.sourceId === sourceId && task.status === "pending") {
@@ -1904,7 +1904,7 @@ var CollaborationEngine = class {
 			};
 			record.reviewItems.push(item);
 			record.actionItems.push(actionForReview(item));
-			invalidateAffected(record, item.affectedSections, item.affectedAcceptanceIds);
+			invalidateAffected(record, item.affectedSections, item.affectedAcceptanceIds, randomUUID);
 			delete record.readyPackage;
 			enterStage(record, "joint-review");
 			record.updatedAt = now;
@@ -1966,7 +1966,7 @@ var CollaborationEngine = class {
 		versionChanged(record, before, {
 			commit: spec.commit,
 			markdown
-		}, now);
+		}, now, randomUUID);
 		return {
 			requirementId: record.id,
 			spec,

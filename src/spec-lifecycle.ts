@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { ActionItem, CollaborationAction, ParticipantSnapshot, ReadinessCheck, RequirementRecord } from './protocol.ts'
 import { currentVersionConfirmations, hasCompletedCurrentReview, hasVersionConfirmation } from './ready-admission.ts'
 
@@ -111,11 +110,11 @@ function decisionAnchorStillExists(markdown: string, anchor: DecisionSourceAncho
     return normalized.includes(context) || normalized.includes(quote)
   })
 }
-export function invalidateAffected(record: RequirementRecord, changedSections: string[], changedAcceptanceIds: string[], currentMarkdown?: string): void {
+export function invalidateAffected(record: RequirementRecord, changedSections: string[], changedAcceptanceIds: string[], createId: () => string, currentMarkdown?: string): void {
   for (const confirmation of record.confirmations) {
     if (confirmation.status !== 'active') continue
     const affected = confirmation.scope === 'version' || (confirmation.scope === 'section' && confirmation.scopeId !== undefined && changedSections.includes(confirmation.scopeId)) || (confirmation.scope === 'acceptance-criterion' && confirmation.scopeId !== undefined && changedAcceptanceIds.includes(confirmation.scopeId))
-    if (affected) { confirmation.status = 'invalidated'; record.actionItems.push({ id: randomUUID(), requirementId: record.id, sourceType: 'confirmation', sourceId: confirmation.id, type: 'reconfirm', assigneeRole: confirmation.role, blocking: true, status: 'pending', dueStage: record.stage, createdAt: Date.now(), updatedAt: Date.now() }) }
+    if (affected) { confirmation.status = 'invalidated'; record.actionItems.push({ id: createId(), requirementId: record.id, sourceType: 'confirmation', sourceId: confirmation.id, type: 'reconfirm', assigneeRole: confirmation.role, blocking: true, status: 'pending', dueStage: record.stage, createdAt: Date.now(), updatedAt: Date.now() }) }
   }
   record.reviewItems.filter(item => item.status === 'resolved' && (intersects(item.affectedSections, changedSections) || intersects(item.affectedAcceptanceIds, changedAcceptanceIds))).forEach(item => { item.status = 'invalidated'; item.updatedAt = Date.now() })
   record.decisions.filter(item => item.status === 'active' && (intersects(item.affectedSections, changedSections) || intersects(item.affectedAcceptanceIds, changedAcceptanceIds))).forEach(item => { item.status = 'invalidated' })
@@ -135,7 +134,7 @@ export function readiness(markdown: string, record: RequirementRecord): Readines
     { key: 'test-constraints', passed: meaningful('测试约束'), reasons: meaningful('测试约束') ? [] : ['测试环境、账号、权限或 fixture 约束不完整'] },
   ]
 }
-export function versionChanged(record: RequirementRecord, previousMarkdown: string, version: { commit: string; markdown: string }, now: number): void {
+export function versionChanged(record: RequirementRecord, previousMarkdown: string, version: { commit: string; markdown: string }, now: number, createId: () => string): void {
   const impact = changedScopes(previousMarkdown, version.markdown)
   record.currentCommit = version.commit
   record.updatedAt = now
@@ -146,7 +145,7 @@ export function versionChanged(record: RequirementRecord, previousMarkdown: stri
     patch.status = 'stale'
     retireActionItems(record, 'patch', patch.id, 'invalidated', now)
   }
-  invalidateAffected(record, impact.sections, impact.acceptanceIds, version.markdown)
+  invalidateAffected(record, impact.sections, impact.acceptanceIds, createId, version.markdown)
 }
 
 export function retireActionItems(record: RequirementRecord, sourceType: ActionItem['sourceType'], sourceId: string, status: 'handled' | 'invalidated', now: number): void {

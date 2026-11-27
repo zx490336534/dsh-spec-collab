@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2 — 2026-11-27
+
+- Add a standalone, offline HTML demo of the review, version-bound confirmation, and Ready Spec export workflow.
+- Share the production version invalidation, readiness checks, and Markdown export with the demo. Use preset reviews and simulated roles to run it entirely in the browser.
+
 ## 0.6.1 — 2026-11-26
 
 - Recognize numbered acceptance headings with scenario tables. Changes to a scenario invalidate confirmations scoped to that acceptance criterion.

@@ -7,6 +7,14 @@
 
 这是一个 DeepSeek Harness 插件。AI 结合项目上下文找出需求缺口，人回答问题、审阅修改，产品和研发对同一版正文确认后导出 Markdown。每次正式修改都有 Git 版本，团队可以追溯当时确认了什么。
 
+## 单 HTML 互动演示
+
+[在测试游记打开演示](https://www.zhongxin.website/tools/spec-collab/) · [下载单 HTML](https://github.com/zx490336534/dsh-spec-collab/releases/download/v0.6.2/spec-collab.html)
+
+打开即可用虚构报表需求体验审核候选改动、双方确认、改版后旧确认失效和 Ready Spec Markdown 下载。审核使用预设结果，确认在当前页面模拟，刷新时重置。下载后可离线打开。
+
+在源码目录执行 `pnpm install --frozen-lockfile` 和 `pnpm build:html`，产物为 `dist/spec-collab.html`。静态站点可把该文件作为 `index.html` 部署。构建后运行 `pnpm test:html` 可用本机 Chrome 验证离线流程。
+
 ## Codex 版本
 
 [Spec Collab for Codex](https://github.com/zx490336534/dsh-spec-collab/tree/main/codex-plugin#readme) 可直接从本仓库的 Marketplace 安装。它复用同一套 Git 版本、审核流程和 Ready 准入规则，在本地浏览器工作台完成产研共审。

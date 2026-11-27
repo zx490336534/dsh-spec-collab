@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="体验 Spec Collab 的需求审核、版本确认失效与 Ready Spec 导出。">
+  <link rel="canonical" href="https://www.zhongxin.website/tools/spec-collab/">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Spec Collab 互动演示</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172b27;
+      --muted: #4b635b;
+      --rule: #cfdad1;
+      --paper: #fcfdf9;
+      --accent: #185b47;
+      color: var(--ink);
+      background: #edf1e9;
+      font: 100% / 1.65 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: var(--accent); text-underline-offset: .2em; }
+    button, input, select { font: inherit; }
+    button, input, select { min-height: 2.65rem; padding: .35rem .7rem; border: 1px solid var(--rule); border-radius: .35rem; color: inherit; background: white; }
+    button:not(:disabled), summary { cursor: pointer; }
+    button:not(:disabled):hover { border-color: var(--accent); }
+    button:disabled, fieldset:disabled input { color: var(--muted); background: #eef2ed; }
+    button.primary:not(:disabled) { background: var(--accent); border-color: var(--accent); color: white; }
+    :focus-visible { outline: 3px solid #216d87; outline-offset: 3px; }
+    .wrap { width: min(72rem, calc(100% - 2rem)); margin: 0 auto; }
+    header { padding: 1.2rem 0 1.4rem; border-top: .35rem solid var(--accent); }
+    nav { display: flex; flex-wrap: wrap; gap: .35rem 1.3rem; margin-bottom: 1.8rem; font-size: .9rem; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: clamp(2rem, 5vw, 3.5rem); line-height: 1.16; letter-spacing: -.035em; font-weight: 720; }
+    header p { margin-top: .8rem; color: var(--muted); }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr); align-items: start; gap: 1rem; padding-bottom: 2rem; }
+    .sheet { min-width: 0; background: var(--paper); border: 1px solid var(--rule); border-radius: .7rem; overflow-wrap: anywhere; }
+    .sheet-top { display: flex; justify-content: space-between; align-items: center; gap: .4rem 1rem; flex-wrap: wrap; padding: .9rem 1.15rem; border-bottom: 1px solid var(--rule); }
+    .sheet h2 { font-size: 1.12rem; }
+    .sheet h3 { font-size: 1rem; margin-bottom: .4rem; }
+    .sheet-body { padding: 1rem 1.15rem; }
+    .version { padding: .18rem .5rem; background: #e8f1e9; border-radius: .25rem; color: var(--accent); font-size: .87rem; }
+    .version + .version { margin-left: .3rem; }
+    .document { margin: 0; padding: .9rem 1.15rem; white-space: pre-wrap; font: inherit; line-height: 1.8; }
+    .step + .step { margin-top: .9rem; padding-top: .85rem; border-top: 1px solid var(--rule); }
+    .step p, .note { color: var(--muted); font-size: .9rem; }
+    details { margin: .45rem 0 .65rem; }
+    summary { color: var(--accent); font-weight: 650; padding: .2rem 0; }
+    .diff { list-style: none; padding: 0; margin: .4rem 0; font-size: .87rem; }
+    .diff li { padding: .4rem .55rem; border-radius: .2rem; }
+    .diff .removed { background: #f8e7e3; color: #6c3029; }
+    .diff .added { background: #e6f1e6; color: #234e38; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem .65rem; margin-top: .55rem; }
+    .signers { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; margin: .55rem 0; }
+    .signers div { display: grid; gap: .15rem; padding: .4rem .55rem; border: 1px solid var(--rule); border-radius: .35rem; }
+    .signers dd { margin: 0; font-size: .85rem; color: #804e28; }
+    .signers dd[data-confirmed="true"] { color: var(--accent); }
+    fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+    #duration { width: 5rem; }
+    #result { grid-column: 1 / -1; min-height: 1.5em; margin: 0; padding: .6rem .9rem; border-left: 3px solid var(--accent); background: #e1ebe0; }
+    @media (max-width: 48rem) {
+      .workspace { grid-template-columns: 1fr; }
+      .wrap { width: min(calc(100% - 1.25rem), 42rem); }
+      nav { margin-bottom: 1.25rem; }
+    }
+    @media (max-width: 26rem) {
+      .sheet-top, .sheet-body, .document { padding-inline: .8rem; }
+      .actions button { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav aria-label="相关页面">
+        <a href="https://www.zhongxin.website/lab/">← 测试游记 · 工具与课程</a>
+        <a href="https://github.com/zx490336534/dsh-spec-collab#readme">源码与插件安装 ↗</a>
+      </nav>
+      <h1>Spec Collab 需求共审</h1>
+      <p>用一份虚构报表需求，体验审核建议、版本确认和 Ready Spec 导出。审核为预设结果，刷新会重置进度。</p>
+    </div>
+  </header>
+
+  <main class="wrap workspace">
+    <p id="result" role="status"></p>
+    <section class="sheet" aria-labelledby="spec-heading">
+      <div class="sheet-top">
+        <h2 id="spec-heading">报表导出结果保留多久</h2>
+        <div><span id="version" class="version"></span><span id="stage" class="version"></span></div>
+      </div>
+      <pre id="spec" class="document"></pre>
+    </section>
+
+    <section class="sheet" aria-labelledby="review-heading">
+      <div class="sheet-top">
+        <h2 id="review-heading">协作工作台</h2>
+        <button type="button" id="reset">重置演示</button>
+      </div>
+      <div class="sheet-body">
+        <section class="step" aria-labelledby="question-heading">
+          <h3 id="question-heading">审核建议</h3>
+          <details id="suggestion">
+            <summary id="suggestion-toggle">报表过期后，下载应该怎样处理？</summary>
+            <p>建议保留 24 小时，并向用户说明如何再次导出。</p>
+            <ul class="diff" id="diff" aria-label="验收标准差异"></ul>
+            <button class="primary" type="button" id="apply" disabled>采纳候选修改</button>
+          </details>
+        </section>
+
+        <section class="step" aria-labelledby="approval-heading">
+          <h3 id="approval-heading">确认当前版本</h3>
+          <div class="actions">
+            <button type="button" id="precheck" disabled>运行预设研发预审</button>
+            <p id="precheck-state"></p>
+          </div>
+          <dl class="signers">
+            <div><dt>产品</dt><dd id="status-product"></dd></div>
+            <div><dt>研发</dt><dd id="status-engineering"></dd></div>
+          </dl>
+          <div class="actions">
+            <label for="role">当前角色</label>
+            <select id="role" disabled><option value="product">产品</option><option value="engineering">研发</option></select>
+            <button type="button" id="confirm" disabled>确认当前版本</button>
+          </div>
+        </section>
+
+        <section class="step" aria-labelledby="edit-heading">
+          <h3 id="edit-heading">修改验收标准</h3>
+          <p>试试在双方确认后把 24 小时改成 48 小时。</p>
+          <form id="edit">
+            <fieldset class="actions" id="adjustment" disabled>
+              <label for="duration">保留时长（小时）</label>
+              <input id="duration" type="number" min="1" max="168" step="1" value="24" required>
+              <button type="submit" id="save" disabled>保存新版本</button>
+            </fieldset>
+          </form>
+        </section>
+
+        <section class="step" aria-labelledby="download-heading">
+          <h3 id="download-heading">交付</h3>
+          <p>当前版本通过预审且收到双方确认后，就可以下载。</p>
+          <div class="actions"><button class="primary" type="button" id="download" disabled>下载 Ready Spec</button></div>
+        </section>
+      </div>
+    </section>
+    <noscript>请启用 JavaScript 以体验互动演示。</noscript>
+  </main>
+  <!-- SPEC_COLLAB_BUNDLE -->
+</body>
+</html>

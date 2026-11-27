@@ -348,7 +348,7 @@ export class CollaborationEngine {
       }
       record.reviewItems.push(item)
       record.actionItems.push(actionForReview(item))
-      invalidateAffected(record, item.affectedSections, item.affectedAcceptanceIds)
+      invalidateAffected(record, item.affectedSections, item.affectedAcceptanceIds, randomUUID)
       delete record.readyPackage
       enterStage(record, 'joint-review')
       record.updatedAt = now
@@ -396,7 +396,7 @@ export class CollaborationEngine {
         retireActionItems(record, 'review-item', item.id, 'handled', now)
       }
     }
-    versionChanged(record, before, { commit: spec.commit, markdown }, now)
+    versionChanged(record, before, { commit: spec.commit, markdown }, now, randomUUID)
     return { requirementId: record.id, spec, task: this.queueReview(record, action.participant, 'change-review', now) }
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-spec-collab",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "AI-assisted requirement clarification and Git-backed Spec co-creation for DeepSeek Harness, ending at a human-confirmed Ready Spec.",
   "keywords": [
     "deepseek-harness",
@@ -62,6 +62,8 @@
     "test": "vitest run --maxWorkers=1 --minWorkers=1 --exclude tests/e2e/**",
     "test:e2e": "playwright test",
     "build:codex": "tsdown --config codex-plugin/build.config.ts",
+    "build:html": "node scripts/build-html.mjs",
+    "test:html": "node demo/smoke.mjs",
     "test:codex": "node --test codex-plugin/tests/*.node.mjs",
     "test:codex:e2e": "playwright test --config codex-plugin/tests/playwright.config.ts",
     "test:codex:live": "node codex-plugin/tests/live.mjs"
